@@ -222,6 +222,8 @@ def cmd_refs(a, idx):
     uses = sorted((r for r in target if not r[1].startswith(('call',) + DEFS)), key=key)
     defs = sorted((r for r in target if r[1].startswith(DEFS)), key=key)
     section('calls (resolved by clang)', [fmt(r, show_sym) for r in calls], a.limit)
+    if calls:
+        print('  (exact: clang resolved each call from the real type of its receiver, whatever the variable is named)')
     if any(r[1].endswith('-using') for r in target):
         print('  (call-using: a call through a using-declaration inside a template, resolved from its instantiations)')
     section('other references (address taken, template arguments, writes, ...)',

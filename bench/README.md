@@ -9,6 +9,8 @@
 - C: ltidx の TSV 索引を rg で引く(使い方の指示付き)
 - D: LSP と、LSP を使えという指示
 - E: `../query` の CLI `ltq`(使い方の指示付き)。シェルを渡しますが、承認するのは `ltq` だけです
+- F: `../mcp` の MCP サーバー(指示なし)。作業フォルダの `.mcp.json` に登録します。シェルは渡しません
+- G: F に使い方の指示(`mcp-instructions.md`)を足したもの
 
 結果と考察は `../docs/design.md` にあります。問題は、公開されている C++ のゲームエンジン [Nox](https://github.com/noxitro/Nox) の 4 問です。
 
@@ -33,8 +35,9 @@ python -I collect.py .
   - Copilot に渡すのは読み取り専用のツール(`view` `rg` `grep` `glob` `lsp`)だけで、書き込みは渡しません
   - シェルは条件 E だけで渡し、`--allow-tool 'shell(ltq)'` で `ltq` 以外のコマンドは承認しません(非対話モードなので拒否されます)
   - セッションは `runs\index.jsonl` に記録し、やり取りの Markdown は `runs\` に出します(`runs\` はリポジトリに入れません)
-- `-Round` は計測の回です。v1 は最初の計測、v2 は `dep` 行と指示の改善後、v3 は ltq です。集計は回ごとに出ます
-- `-Index` は、条件 C・E で使う索引のファイル名です(`-IndexDir` 配下)
+- `-Round` は計測の回です。v1 は最初の計測、v2 は `dep` 行と指示の改善後、v3 は ltq、v4 は MCP です。集計は回ごとに出ます
+- `-Index` は、条件 C・E・F・G で使う索引のファイル名です(`-IndexDir` 配下)
+- 条件 F・G の `.mcp.json` は、Copilot CLI が信頼済みのフォルダでしか読みません。`run.ps1` は `--trust-folder` を付けて実行します
 - `collect.py` は `~/.copilot/session-store.db` と、各セッションの `events.jsonl` を読み取り専用で開き、`runs\summary.tsv` と条件ごとの平均を出します。`rep=0` は試運転として集計から外します
 - 問題と正解は `tasks.json`、回答の書式は `answer-format.md` です。指示は、索引用が `index-instructions.md`(v1 の計測で使ったものは `index-instructions-v1.md`)、LSP 用が `lsp-instructions.md`、ltq 用が `cli-instructions.md` です
 
