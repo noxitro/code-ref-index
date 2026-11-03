@@ -1,0 +1,28 @@
+[
+  {
+    "id": "T1",
+    "kind": "同名メソッドが多い(GetType は 8 種)",
+    "prompt": "このフォルダは C++ のゲームエンジン Nox のソースです。`nox::reflection::ClassInfo` のメンバー関数 `GetType()` を呼び出している箇所をすべて挙げてください。他のクラスの `GetType()` の呼び出しは含めません。",
+    "note": "remote_system.cpp:198/208 は /* */ のコメント内なので正解に含めない",
+    "truth": ["runtime/core/world.cpp:297", "runtime/core/dev/editor_remote_server.cpp:164", "runtime/core/dev/editor_remote_server.cpp:167", "runtime/reflection/database.cpp:70", "runtime/reflection/database.cpp:424", "runtime/reflection/database.cpp:450", "runtime/reflection/database.cpp:452", "runtime/core/world_legacy.cpp:419", "runtime/core/dev/socket_stream_reader.cpp:158"]
+  },
+  {
+    "id": "T2",
+    "kind": "対照: 変数名で rg でも絞れる",
+    "prompt": "このフォルダは C++ のゲームエンジン Nox のソースです。`nox::JobSystem::Initialize` を呼び出している箇所をすべて挙げてください(定義・宣言は含めません)。",
+    "truth": ["runtime/bench/bench_job.cpp:34", "runtime/bench/bench_job.cpp:98", "runtime/bench/bench_ecs.cpp:250", "runtime/core/world_legacy.cpp:485", "runtime/core/test/updater_graph_benchmark.cpp:343", "runtime/core/test/updater_graph_benchmark.cpp:397", "runtime/core/test/updater_graph_benchmark.cpp:437", "runtime/core/test/job_system_test.cpp:57", "runtime/core/test/job_system_test.cpp:112", "runtime/core/test/job_system_test.cpp:155", "runtime/core/test/job_system_dispatch_test.cpp:34", "runtime/core/test/job_system_dispatch_test.cpp:68", "runtime/core/test/job_system_dispatch_test.cpp:95", "runtime/core/test/entity_ecs_test.cpp:454", "runtime/core/test/entity_ecs_test.cpp:469"]
+  },
+  {
+    "id": "T3",
+    "kind": "同名関数が多い(Read は 5 種、rg で 79 件)",
+    "prompt": "このフォルダは C++ のゲームエンジン Nox のソースです。`nox::io::File::Read` を呼び出している箇所をすべて挙げてください(定義・宣言は含めません)。",
+    "truth": ["runtime/kernel/test/file_win64_test.cpp:110", "runtime/kernel/test/file_win64_test.cpp:156", "runtime/kernel/io/stream_reader.cpp:40"]
+  },
+  {
+    "id": "T4",
+    "kind": "テンプレート内の呼び出し(Base::Reset)",
+    "prompt": "このフォルダは C++ のゲームエンジン Nox のソースです。`nox::detail::IDelegateBase::Reset` を呼び出している箇所をすべて挙げてください。呼び出し先が `IDelegateBase::Reset` であるものが対象で、どの関数の中に書かれているかは問いません。派生クラスで定義された同名の関数 `Reset` を呼んでいる箇所は含めません。定義・宣言も含めません。",
+    "truth": ["runtime/kernel/delegate.h:195", "runtime/kernel/delegate.h:250", "runtime/kernel/delegate.h:360", "runtime/kernel/delegate.h:434"],
+    "note": "434 は実体化されない CopyableDelegate::Unbind 内の、IDelegate の using 宣言を経由した呼び出し。clangd は返さない。ltidx は call-using の行で返す(2026-11-04 以降)"
+  }
+]

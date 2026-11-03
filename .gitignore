@@ -1,0 +1,10 @@
+build/
+out/
+__pycache__/
+*.pyc
+# 生成した索引
+*.tsv
+!indexer/test/expected*.tsv
+.index/
+# 計測のやり取り(セッション ID や会話の全文を含む)
+bench/runs/

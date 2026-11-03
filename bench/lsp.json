@@ -1,0 +1,24 @@
+{
+  "lspServers": {
+    "clangd": {
+      "command": "clangd",
+      "args": [
+        "--compile-commands-dir=.cdb",
+        "--background-index",
+        "-j=8",
+        "--header-insertion=never",
+        "--log=error"
+      ],
+      "fileExtensions": {
+        ".cpp": "cpp",
+        ".cxx": "cpp",
+        ".cc": "cpp",
+        ".c": "c",
+        ".h": "cpp",
+        ".hpp": "cpp",
+        ".hxx": "cpp",
+        ".inl": "cpp"
+      }
+    }
+  }
+}

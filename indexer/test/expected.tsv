@@ -1,0 +1,33 @@
+A	def		sample.cpp:2:8	struct A { void Reset(); };
+A::Reset	decl		sample.cpp:2:17	struct A { void Reset(); };
+Plain	def		sample.cpp:6:6	void Plain(A &a) {
+A	ref	Plain	sample.cpp:6:12	void Plain(A &a) {
+A::Reset	call	Plain	sample.cpp:7:5	a.Reset();  // a.Reset();
+Base	def		sample.cpp:14:27	template <class T> struct Base { void Reset() {} };
+Base::Reset	def		sample.cpp:14:39	template <class T> struct Base { void Reset() {} };
+Mid	def		sample.cpp:15:27	template <class T> struct Mid : Base<T> {
+Base	ref	Mid	sample.cpp:15:33	template <class T> struct Mid : Base<T> {
+Mid::Super	def		sample.cpp:16:9	using Super = Base<T>;
+Base	ref	Mid::Super	sample.cpp:16:17	using Super = Base<T>;
+Mid::Reset	decl		sample.cpp:17:16	using Super::Reset;
+Mid::Super	ref	Mid	sample.cpp:17:9	using Super::Reset;
+Leaf	def		sample.cpp:19:27	template <class T> struct Leaf : Mid<T> {
+Mid	ref	Leaf	sample.cpp:19:34	template <class T> struct Leaf : Mid<T> {
+Leaf::Super	def		sample.cpp:20:9	using Super = Mid<T>;
+Mid	ref	Leaf::Super	sample.cpp:20:17	using Super = Mid<T>;
+Leaf::Used	def		sample.cpp:21:8	void Used() { Super::Reset(); }    // 実体化される
+Mid::Reset	call	Leaf::Used	sample.cpp:21:24	void Used() { Super::Reset(); }    // 実体化される
+Leaf::Super	ref	Leaf::Used	sample.cpp:21:17	void Used() { Super::Reset(); }    // 実体化される
+Leaf::Unused	def		sample.cpp:22:8	void Unused() { Super::Reset(); }  // 実体化されない
+Mid::Reset	call	Leaf::Unused	sample.cpp:22:26	void Unused() { Super::Reset(); }  // 実体化されない
+Leaf::Super	ref	Leaf::Unused	sample.cpp:22:19	void Unused() { Super::Reset(); }  // 実体化されない
+Generic	def		sample.cpp:26:25	template <class T> void Generic(T &t) { t.Reset(); }
+Use	def		sample.cpp:28:6	void Use() {
+Leaf	ref	Use	sample.cpp:29:3	Leaf<int> l;
+Leaf::Used	call	Use	sample.cpp:30:5	l.Used();
+Base::Reset	call	Leaf::Used	sample.cpp:21:24	void Used() { Super::Reset(); }    // 実体化される
+Base::Reset	call-using	Leaf::Used	sample.cpp:21:24	void Used() { Super::Reset(); }    // 実体化される
+Base::Reset	call-using	Leaf::Unused	sample.cpp:22:26	void Unused() { Super::Reset(); }  // 実体化されない
+?::Reset	dep	Leaf::Used	sample.cpp:21:24	void Used() { Super::Reset(); }    // 実体化される
+?::Reset	dep	Leaf::Unused	sample.cpp:22:26	void Unused() { Super::Reset(); }  // 実体化されない
+?::Reset	dep	Generic	sample.cpp:26:43	template <class T> void Generic(T &t) { t.Reset(); }
