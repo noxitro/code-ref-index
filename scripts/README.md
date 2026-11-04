@@ -89,4 +89,5 @@ setup-instructions.bat -Root D:\src\game -Action Remove
 - 壊れたプロジェクトが混ざっていても、ほかのプロジェクトの分ができること
 - 要求したプラットフォームを持たないプロジェクトを読まないこと
 - `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること
+- `setup`(リポジトリ直下の `setup.bat` の中身)に LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
 - `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)
