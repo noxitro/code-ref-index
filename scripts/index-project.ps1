@@ -1,22 +1,31 @@
 ﻿# プロジェクトの索引を作る: <Root>\.index\<Name>.tsv(と .tu.tsv / .skip.tsv / .deps.tsv)
-# ltidx を最低優先度で実行する。引数を省くと尋ねる(ダブルクリック用)。
+# ltidx を最低優先度で実行する。引数を省くとソースのルートだけを尋ねる(ダブルクリック用)。
+# compile_commands.json を -Cdb で渡さず、ルートにも無ければ、make-cdb.ps1 で作る(.slnx / .sln / .vcxproj / CMakeLists.txt から)。
 # 構成(Debug/Release、プラットフォームなど)ごとに -Name を変えて作ると、ltq と MCP サーバーはすべてをまとめて引く。
 # -Update を付けると、前回の後に変わったファイルを読む TU・新しい TU・コマンドの変わった TU だけを解析し直す。
 param(
     [string]$Root,                  # ソースのルート(索引のパスの起点。MCP サーバーもここで動かす)
-    [string]$Cdb,                   # compile_commands.json のあるフォルダ(既定 <Root>)
+    [string]$Cdb,                   # compile_commands.json のあるフォルダ(省くと、ルートのもの、無ければ作る)
+    [string]$Project,               # compile_commands.json を作る元(.slnx / .sln / .vcxproj / CMakeLists.txt)。省くと探す
+    [string]$Configuration = 'Debug',
+    [string]$Platform = 'x64',
+    [string[]]$CMakeArgs = @(),     # CMake の構成に足す引数(例: -DBUILD_EXAMPLES=ON)
     [string]$Name = 'index',        # 索引の名前(構成名)。英数字・_・- のみ
     [int]$Jobs = [Math]::Max(1, [int]([Environment]::ProcessorCount / 2)),
     [switch]$Update                 # 前回の索引の後に変わった TU だけを解析し直す(初回は全体を作る)
 )
 $ErrorActionPreference = 'Stop'
-if (-not $Root) {
-    $Root = Read-Host 'ソースのルート'
-    if (-not $Cdb) { $Cdb = Read-Host 'compile_commands.json のあるフォルダ(空ならルート)' }
-}
-if (-not $Cdb) { $Cdb = $Root }
+if (-not $Root) { $Root = Read-Host 'ソースのルート' }
 if ($Name -notmatch '^[A-Za-z0-9_-]+$') { throw "-Name は英数字・_・- のみ: $Name" }
 $Root = (Resolve-Path $Root).Path
+if (-not $Cdb -and -not $Project -and (Test-Path "$Root\compile_commands.json")) { $Cdb = $Root }
+if (-not $Cdb) {
+    # 毎回作り直す(数秒で済み、増えた・消えたソースも拾える)
+    $Cdb = "$Root\.index\cdb-$Configuration-$Platform"
+    $mk = @{ Root = $Root; Configuration = $Configuration; Platform = $Platform; Out = $Cdb; CMakeArgs = $CMakeArgs }
+    if ($Project) { $mk.Project = $Project }
+    & (Join-Path $PSScriptRoot 'make-cdb.ps1') @mk
+}
 $Cdb = (Resolve-Path $Cdb).Path
 if (-not (Test-Path "$Cdb\compile_commands.json")) { throw "compile_commands.json not found in $Cdb" }
 $exe = Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe'

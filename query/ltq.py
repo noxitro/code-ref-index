@@ -8,10 +8,12 @@
 import argparse
 import bisect
 import codecs
+import mmap
 import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 SRC_EXT = {'.h', '.hh', '.hpp', '.hxx', '.c', '.cc', '.cpp', '.cxx', '.inl', '.ipp', '.inc', '.ixx', '.cppm', '.tpp', '.txx',
            '.m', '.mm'}
@@ -72,6 +74,34 @@ def longest_increasing(pairs):
     return out[::-1]
 
 
+def grep_lines(path, needles):
+    """path のファイルのうち、needles(bytes)のどれかを含む行(改行を除く)を、ファイルの順に返す。
+    改行で始まる needle は、残りの部分で始まる行に当たる。
+    大きな索引を 1 行ずつ Python で調べると遅いので、mmap の find で当たった行だけを取り出す。"""
+    needles = [n for n in needles if n]
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return []
+    if not needles or size == 0:
+        return []
+    found = {}
+    with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+        for n in needles:
+            head = n[:1] == b'\n'
+            i = 0 if head and m[:len(n) - 1] == n[1:] else m.find(n)
+            while i >= 0:
+                if head and i:
+                    i += 1  # find が返すのは直前の改行の位置
+                b = m.rfind(b'\n', 0, i) + 1
+                e = m.find(b'\n', i)
+                e = size if e < 0 else e
+                if b not in found:
+                    found[b] = m[b:e].rstrip(b'\r')
+                i = m.find(n, e)
+    return [found[b] for b in sorted(found)]
+
+
 def canon_line(raw):
     """ltidx が索引に入れるソース行と同じ形(前後の空白を除き 200 バイトまで、タブと改行は空白)。"""
     s = raw.strip()[:200]
@@ -97,6 +127,7 @@ class Index:
         self._seen = None
         self._fresh = None
         self._codec = False
+        self._sources = None
         self._lines = {}
         self._maps = {}  # (構成名, path) -> 行の付け直しの対応。rows() が作り、skips() も使う
 
@@ -119,7 +150,9 @@ class Index:
                     out.add(path)
             except OSError:
                 out.add(path)
-        return out | {p for p in self.seen()[part.name] if not os.path.exists(os.path.join(self.root, p))}
+        src = self.sources()
+        return out | {p for p in self.seen()[part.name]
+                      if p not in src and not os.path.exists(os.path.join(self.root, p))}
 
     def _line_map(self, path, anchors):
         """索引にある (行, ソース行) を今のファイルから探し、{索引の行: 今の行 か None}。
@@ -191,8 +224,9 @@ class Index:
         est = min(max(line + shift, 1), max(len(cur), 1))
         return est, 'line changed or removed after indexing' + (f'; estimated from line {line}' if est != line else '')
 
-    def rows(self, keep):
-        """keep(bytes の行) が真の行だけを (sym, role, caller, path, line, col, src, note, configs) にして返す。
+    def rows(self, needles, keep):
+        """needles(bytes)のどれかを含み、keep(bytes の行)が真の行だけを
+        (sym, role, caller, path, line, col, src, note, configs) にして返す。
         note は行の付け直しの注記、configs はその行がある構成名の frozenset。
         索引の後に変わったファイルの行は、索引にあるソース行の文字列で今のファイルから探し直す。"""
         merged = {}
@@ -200,24 +234,22 @@ class Index:
             stale = self._stale(part)
             sb = {p.encode('utf-8') for p in stale}
             anchors, picked = {}, []
-            with open(part.path, 'rb') as f:
-                for raw in f:
-                    hit = keep(raw)
-                    if not hit:  # 変わったファイルの行は、行の付け直しの手がかりとして読む
-                        if not sb:
-                            continue
-                        q = raw.split(b'\t', 4)
-                        if len(q) < 5 or q[3].rsplit(b':', 2)[0] not in sb:
-                            continue
-                    p = raw.rstrip(b'\r\n').split(b'\t', 4)
-                    if len(p) < 5:
+            # 変わったファイルの行は、問い合わせに合わなくても行の付け直しの手がかりとして読む
+            for raw in grep_lines(part.path, list(needles) + [b'\t' + p + b':' for p in sb]):
+                hit = keep(raw)
+                if not hit:
+                    q = raw.split(b'\t', 4)
+                    if len(q) < 5 or q[3].rsplit(b':', 2)[0] not in sb:
                         continue
-                    loc = p[3].rsplit(b':', 2)
-                    path, src = loc[0].decode('utf-8', 'replace'), p[4].decode('utf-8', 'replace')
-                    if path in stale:
-                        anchors.setdefault(path, []).append((int(loc[1]), src))
-                    if hit:
-                        picked.append((p, path, int(loc[1]), int(loc[2]), src))
+                p = raw.split(b'\t', 4)
+                if len(p) < 5:
+                    continue
+                loc = p[3].rsplit(b':', 2)
+                path, src = loc[0].decode('utf-8', 'replace'), p[4].decode('utf-8', 'replace')
+                if path in stale:
+                    anchors.setdefault(path, []).append((int(loc[1]), src))
+                if hit:
+                    picked.append((p, path, int(loc[1]), int(loc[2]), src))
             for path, a in anchors.items():
                 self._set_map(part, path, self._line_map(path, a))
             for p, path, line, col, src in picked:
@@ -248,10 +280,8 @@ class Index:
             sp = part.path + '.skip.tsv'
             if not os.path.exists(sp):
                 continue
-            with open(sp, 'rb') as f:
-                next(f, None)
-                for raw in f:
-                    p = raw.rstrip(b'\r\n').split(b'\t')
+            for raw in grep_lines(sp, [w + b'\t' for w in want]):
+                    p = raw.split(b'\t')
                     if len(p) != 4 or p[0] not in want:
                         continue
                     b, e = (tuple(int(x) for x in s.split(b':')) for s in p[2:4])
@@ -271,6 +301,14 @@ class Index:
             for part in self.parts:
                 s = set(self._tu(part)[2])
                 raw_paths = set()
+                dp = part.path + '.deps.tsv'
+                if os.path.exists(dp):  # TU が読んだファイルの記録が、索引とコメントのあるファイルをすべて含む
+                    with open(dp, 'rb') as f:
+                        next(f, None)
+                        raw_paths.update(re.findall(rb'\t([^\t\r\n]+)', f.read()))
+                    s.update(p.decode('utf-8', 'replace') for p in raw_paths)
+                    self._seen[part.name] = s
+                    continue
                 with open(part.path, 'rb') as f:
                     last = None
                     for raw in f:
@@ -287,11 +325,6 @@ class Index:
                     with open(sp, 'rb') as f:
                         next(f, None)
                         raw_paths.update(raw.split(b'\t', 1)[0] for raw in f)
-                dp = part.path + '.deps.tsv'
-                if os.path.exists(dp):
-                    with open(dp, 'rb') as f:
-                        next(f, None)
-                        raw_paths.update(raw.rstrip(b'\r\n').split(b'\t')[-1] for raw in f)
                 s.update(p.decode('utf-8', 'replace') for p in raw_paths)
                 self._seen[part.name] = s
         return self._seen
@@ -357,21 +390,41 @@ class Index:
             return self._fresh
         changed, new = [], []
         seen = set().union(*self.seen().values())
-        for fp in walk_sources(self, set()):
-            try:
-                m = os.path.getmtime(fp)
-            except OSError:
-                continue
+        for rel, fp, m in walk_sources(self, set()):
             if m <= self.mtime:
                 continue
-            rel = self.rel(fp)
             if rel in seen:
                 changed.append(rel)
             elif os.path.splitext(fp)[1].lower() in TU_EXT:
                 new.append(rel)
-        missing = sorted(p for p in self.tu_status()[2] if not os.path.exists(os.path.join(self.root, p)))
+        src = self.sources()
+        missing = sorted(p for p in self.tu_status()[2]
+                         if p not in src and not os.path.exists(os.path.join(self.root, p)))
         self._fresh = (sorted(changed), sorted(new), missing)
         return self._fresh
+
+    def sources(self):
+        """{ルートからの相対パス: (絶対パス, 更新日時)}。ルート配下の C/C++ のソースすべて(. で始まるフォルダを除く)。
+        1 回だけ走査する。Windows では scandir の項目が更新日時を持っているので、ファイルごとの stat が要らない。"""
+        if self._sources is None:
+            out, todo, n = {}, [self.root], len(self.root) + 1
+            while todo:
+                try:
+                    it = os.scandir(todo.pop())
+                except OSError:
+                    continue
+                with it:
+                    for e in it:
+                        try:
+                            if e.is_dir(follow_symlinks=False):
+                                if not e.name.startswith('.'):
+                                    todo.append(e.path)
+                            elif os.path.splitext(e.name)[1].lower() in SRC_EXT:
+                                out[e.path[n:].replace('\\', '/')] = (e.path, e.stat().st_mtime)
+                        except OSError:
+                            continue
+            self._sources = out
+        return self._sources
 
     def header(self):
         def built(part):
@@ -433,28 +486,37 @@ def classify_ranges(ranges, line, col, readers):
 
 
 def walk_sources(idx, excludes):
-    """excludes はディレクトリ名(どこにあっても除く)か、ルートからの相対パスの接頭辞。"""
+    """ルート配下のソースを (相対パス, 絶対パス, 更新日時) で返す。順はフォルダごとに、ファイルを先、サブフォルダを後にする。
+    excludes はディレクトリ名(どこにあっても除く)か、ルートからの相対パスの接頭辞。"""
     pre = tuple(e.strip('/') + '/' for e in excludes if '/' in e)
-    for d, dirs, files in os.walk(idx.root):
-        dirs[:] = [x for x in dirs if not x.startswith('.') and x not in excludes]
-        if pre and (idx.rel(d) + '/').startswith(pre):
-            dirs[:] = []
+    names = {e for e in excludes if '/' not in e}
+
+    def order(rel):
+        *dirs, name = rel.lower().split('/')
+        return tuple((1, d) for d in dirs) + ((0, name),)
+
+    for rel, (fp, m) in sorted(idx.sources().items(), key=lambda kv: order(kv[0])):
+        if pre and rel.startswith(pre):
             continue
-        for fn in files:
-            if os.path.splitext(fn)[1].lower() in SRC_EXT:
-                yield os.path.join(d, fn)
+        if names and not names.isdisjoint(rel.split('/')[:-1]):
+            continue
+        yield rel, fp, m
 
 
-def lexical_hint(data, starts, ln, col):
-    """索引に無い一致の見当: 文字列リテラルの中か、マクロ定義の中か。"""
-    b = starts[ln - 1]
+DEFINE = re.compile(rb'[ \t]*#[ \t]*define\b')
+
+
+def lexical_hint(data, b, col):
+    """索引に無い一致の見当: 文字列リテラルの中か、マクロ定義の中か。b は一致した行の先頭の位置。"""
     before = data[b:b + col - 1]
     if len(re.findall(rb'(?<!\\)"', before)) % 2 == 1:
         return 'string'
-    i = ln - 1
-    while i > 0 and data[starts[i - 1]:starts[i]].rstrip(b'\r\n').endswith(b'\\'):
-        i -= 1
-    if re.match(rb'\s*#\s*define\b', data[starts[i]:]):
+    while b > 0:  # 前の行が `\` で終わっていれば、続きの行なので遡る
+        p = data.rfind(b'\n', 0, b - 1) + 1
+        if not data[p:b].rstrip(b'\r\n').endswith(b'\\'):
+            break
+        b = p
+    if DEFINE.match(data, b):
         return 'macro'
     return None
 
@@ -464,27 +526,31 @@ def text_hits(idx, short, excludes):
     sb = short.encode('utf-8')
     pat = re.compile(rb'(?<![A-Za-z0-9_])' + re.escape(sb) + rb'(?![A-Za-z0-9_])')
     hits = []
-    for fp in walk_sources(idx, excludes):
+
+    def load(item):  # 読むのは並列にする(大きなコードでは読み込みの待ちが大半)
+        rel, fp, mtime = item
         try:
             with open(fp, 'rb') as f:
                 data = f.read()
         except OSError:
-            continue
-        if sb not in data:
-            continue
+            return None
+        return (rel, mtime, data) if sb in data else None
+
+    with ThreadPoolExecutor(max_workers=min(16, os.cpu_count() or 4)) as ex:
+        loaded = [x for x in ex.map(load, walk_sources(idx, excludes)) if x]
+    for rel, mtime, data in loaded:
         data = to_utf8(data, idx.codec())  # Shift_JIS の 2 バイト目が英字になる偽の一致も、直してから探せば出ない
-        rel = idx.rel(fp)
-        stale = os.path.getmtime(fp) > idx.mtime
-        starts = None
+        stale = mtime > idx.mtime
+        ln, last = 1, 0
         for m in pat.finditer(data):
-            if starts is None:
-                starts = [0] + [i + 1 for i, ch in enumerate(data) if ch == 10]
-            ln = bisect.bisect_right(starts, m.start())
-            b = starts[ln - 1]
-            e = data.find(b'\n', m.start())
+            pos = m.start()
+            ln += data.count(b'\n', last, pos)  # 行番号は直前の一致から数え足す
+            last = pos
+            b = data.rfind(b'\n', 0, pos) + 1
+            e = data.find(b'\n', pos)
             src = data[b:e if e >= 0 else len(data)].strip().decode('utf-8', 'replace')[:200]
-            col = m.start() - b + 1
-            hits.append((rel, ln, col, src, stale, lexical_hint(data, starts, ln, col)))
+            col = pos - b + 1
+            hits.append((rel, ln, col, src, stale, lexical_hint(data, b, col)))
     return hits
 
 
@@ -541,7 +607,8 @@ def cmd_refs(a, idx):
     def match(sym):
         return sym == name or sym.endswith('::' + name)
 
-    rows = [r for r in idx.rows(lambda raw: sb in raw) if r[0].rsplit('::', 1)[-1] == short]
+    # 記号の列の末尾が short の行だけを読む(`short<TAB>` を含む行。`Loader` などの部分一致の行は読まない)
+    rows = [r for r in idx.rows([sb + b'\t'], lambda raw: True) if r[0].rsplit('::', 1)[-1] == short]
     # 仮想関数の上書き(上書きするメソッド -> 上書きされる基底のメソッド)。同じ名前なので rows に入っている
     up, down, ov_at = {}, {}, {}
     for r in rows:
@@ -690,7 +757,8 @@ def cmd_check(a, idx):
         locs.append((p, int(m.group(2)), int(m.group(3)) if m.group(3) else None))
     paths = {p for p, _, _ in locs}
     pb = [p.encode('utf-8') for p in paths]
-    rows = idx.rows(lambda raw: any(b'\t' + p + b':' in raw for p in pb))
+    needles = [b'\t' + p + b':' for p in pb]
+    rows = idx.rows(needles, lambda raw: any(n in raw for n in needles))
     ranges = idx.skips(paths)
     idx.header()
     for path, line, col in locs:

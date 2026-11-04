@@ -1,4 +1,4 @@
-# ltq・MCP サーバーのテスト(Windows と Linux)と、ltidx のビルドとテスト(Windows、LLVM の公式配布物を使う)
+# ltq・MCP サーバーのテスト(Windows と Linux)と、ltidx のビルドとテスト・make-cdb のテスト(Windows、LLVM の公式配布物を使う)
 name: CI
 
 on:
@@ -61,3 +61,6 @@ jobs:
       - name: Test ltidx
         shell: cmd
         run: indexer\test\run_test.bat
+      - name: Test make-cdb / index-project
+        shell: cmd
+        run: scripts\test\run_test.bat

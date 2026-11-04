@@ -3,6 +3,6 @@ rem Regression test for ltq (synthetic indexes: merged configurations, re-locate
 setlocal
 cd /d "%~dp0"
 python -I -W error::ResourceWarning -m unittest discover -s . -v
-set RC=%ERRORLEVEL%
+set TESTRC=%ERRORLEVEL%
 if not defined CI pause
-exit /b %RC%
+exit /b %TESTRC%
