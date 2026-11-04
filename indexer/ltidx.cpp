@@ -832,9 +832,13 @@ int main(int argc, const char **argv) {
   if (!Cdb) { llvm::errs() << Err << "\n"; return 2; }
   if (Update && !Files.empty()) { llvm::errs() << "-update と対象ファイルは一緒に指定できません\n"; return 2; }
 
+  // C/C++ 以外の入力(CMake の compile_commands.json に載るアセンブリ・リソース)と、モジュールの .ixx は解析しない。
+  // 解析すると「失敗した TU」に数えられる
   std::vector<std::string> All;
-  for (const auto &F : Cdb->getAllFiles())
-    if (llvm::sys::fs::exists(F) && !llvm::StringRef(F).ends_with(".ixx")) All.push_back(F);
+  for (const auto &F : Cdb->getAllFiles()) {
+    std::string Ext = llvm::sys::path::extension(F).lower();
+    if (llvm::sys::fs::exists(F) && Ext != ".ixx" && Ext != ".asm" && Ext != ".rc" && Ext != ".s") All.push_back(F);
+  }
   std::string RootN = normalize(Root);
   // ルートとファイルのパスで書き方が違うことがある(CI の一時フォルダ RUNNER~1 と、MSBuild が返す runneradmin など)
   std::vector<std::string> Roots{RootN};

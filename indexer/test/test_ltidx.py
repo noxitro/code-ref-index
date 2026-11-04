@@ -100,6 +100,15 @@ class LtidxTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertTrue(self.has('Run', 'call', 'a.cpp:9:26'))
 
+    def test_non_cpp_inputs_are_skipped(self):
+        # CMake の compile_commands.json には、アセンブリとリソースも載る。解析すると「失敗した TU」になる
+        self.write('a.cpp', 'void Run() {}\n', [])
+        self.write('x.asm', 'END\n', [])
+        self.write('v.rc', '1 VERSIONINFO\n', [])
+        rc, err = self.run_ltidx()
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(sorted(self.tus()), ['a.cpp'])
+
     def test_utf8_unchanged(self):
         self.write('a.cpp', SJIS_SRC, ['/utf-8'])
         rc, err = self.run_ltidx('-source-cp', '932')
