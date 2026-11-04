@@ -1,4 +1,6 @@
 build/
+# ltidx のビルドに使う LLVM の場所(各自の環境)
+indexer/llvm-root.txt
 out/
 __pycache__/
 *.pyc

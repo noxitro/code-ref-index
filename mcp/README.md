@@ -34,7 +34,7 @@ code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>]
 すべてのプロジェクトで使う(ユーザー設定 `~/.copilot/mcp-config.json` に登録。`../scripts/register-copilot.bat` が同じことをします):
 
 ```bat
-copilot mcp add code-ref-index -- python -I E:\dev\github.com\noxitro\code-ref-index\mcp\server.py
+copilot mcp add code-ref-index -- python -I <このリポジトリ>\mcp\server.py
 ```
 
 `.index` の無いプロジェクトでは、ツールは「索引が無い」と返すだけです。
@@ -47,7 +47,7 @@ copilot mcp add code-ref-index -- python -I E:\dev\github.com\noxitro\code-ref-i
     "code-ref-index": {
       "type": "local",
       "command": "python",
-      "args": ["-I", "E:\\dev\\github.com\\noxitro\\code-ref-index\\mcp\\server.py"],
+      "args": ["-I", "<このリポジトリ>\\mcp\\server.py"],
       "tools": ["*"]
     }
   }
@@ -72,7 +72,7 @@ Copilot CLI は、許可リストに無い MCP サーバーの初期化時の説
     "code-ref-index": {
       "type": "stdio",
       "command": "python",
-      "args": ["-I", "E:\\dev\\github.com\\noxitro\\code-ref-index\\mcp\\server.py", "--root", "${workspaceFolder}"]
+      "args": ["-I", "<このリポジトリ>\\mcp\\server.py", "--root", "${workspaceFolder}"]
     }
   }
 }

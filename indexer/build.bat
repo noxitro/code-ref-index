@@ -1,10 +1,15 @@
 @echo off
 rem Build ltidx (Release). LLVM_ROOT is the extracted official LLVM release
-rem (clang+llvm-<ver>-x86_64-pc-windows-msvc). Default: E:\tools\llvm-23.1.4
+rem (clang+llvm-<ver>-x86_64-pc-windows-msvc). If LLVM_ROOT is not set, the first line of
+rem llvm-root.txt next to this file is used (not in git; write your own LLVM folder there).
 setlocal
-if not defined LLVM_ROOT set "LLVM_ROOT=E:\tools\llvm-23.1.4"
+if not defined LLVM_ROOT if exist "%~dp0llvm-root.txt" set /p LLVM_ROOT=<"%~dp0llvm-root.txt"
+if not defined LLVM_ROOT (
+  echo LLVM_ROOT is not set. Set it, or write the LLVM folder to %~dp0llvm-root.txt
+  exit /b 1
+)
 if not exist "%LLVM_ROOT%\lib\cmake\clang\ClangConfig.cmake" (
-  echo LLVM not found: %LLVM_ROOT%  ^(set LLVM_ROOT^)
+  echo LLVM not found: %LLVM_ROOT%  ^(set LLVM_ROOT or edit llvm-root.txt^)
   exit /b 1
 )
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"

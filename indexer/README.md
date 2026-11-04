@@ -16,7 +16,7 @@
 ## ビルド
 
 `build.bat` をダブルクリックします。`build\ltidx.exe` ができます(Release、並列 4)。
-LLVM の場所は環境変数 `LLVM_ROOT` で指定します(既定は `E:\tools\llvm-23.1.4`)。
+LLVM の場所は、環境変数 `LLVM_ROOT` か、このフォルダの `llvm-root.txt`(1 行目に展開先のフォルダを書く。git には入りません)で指定します。
 
 ```bat
 set LLVM_ROOT=D:\llvm\clang+llvm-23.1.4-x86_64-pc-windows-msvc
