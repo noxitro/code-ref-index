@@ -86,6 +86,7 @@ GitHub Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡し�
 
 - **LLVM**: 公式リリースの `clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz`(約 900 MB、展開後 4.1 GB)を使う。MSI は `LLVM_INSTALL_TOOLCHAIN_ONLY=ON` で開発用ライブラリを含まない【公式: build_llvm_release.bat】
   - `include` と `lib` だけでは足りない。`LLVMExports.cmake` が `bin` の実行ファイルの存在を確かめる【実測】
+  - CI(GitHub Actions の windows-latest)では、配布物から `include` と `lib`(約 700 MB)だけを取り出し、エクスポートに載る `bin` の 110 ファイルを空のファイルで置く。ビルドとテストが通り、ジョブ全体は約 1 分 45 秒【実測】
   - 配布物は `/MT`、RTTI なしなので、ツールも `/MT /GR-` でビルドする
   - zlib・zstd は同梱されていない。ltidx は圧縮を使わないので `zstub.c` で代替する
 - **重複の除き方**: 実体化ごとに呼び出し元の名前が変わり、Nox で 153 万行(349 MB)になった。修飾名からテンプレート引数を外し、名前空間の行を出さないようにすると 16.9 万行(41 MB)になった【実測】
