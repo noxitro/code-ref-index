@@ -14,51 +14,254 @@ import time
 
 SRC_EXT = {'.h', '.hh', '.hpp', '.hxx', '.c', '.cc', '.cpp', '.cxx', '.inl', '.ipp', '.inc', '.ixx', '.cppm', '.tpp', '.txx',
            '.m', '.mm'}
+TU_EXT = {'.c', '.cc', '.cpp', '.cxx', '.cppm', '.ixx', '.m', '.mm'}  # 単独でコンパイルされうるもの
 DEFS = ('def', 'decl')
 
 
-class Index:
-    def __init__(self, path, root):
+def longest_increasing(pairs):
+    """(old, new) の並び(old の昇順)から、new も増えていく最長の部分列。"""
+    tails, vals, prev = [], [], [None] * len(pairs)  # tails[k]: 長さ k+1 の列の末尾の添え字、vals[k]: その new
+    for i, (_, n) in enumerate(pairs):
+        k = bisect.bisect_left(vals, n)
+        prev[i] = tails[k - 1] if k else None
+        if k == len(tails):
+            tails.append(i)
+            vals.append(n)
+        else:
+            tails[k], vals[k] = i, n
+    out, i = [], tails[-1] if tails else None
+    while i is not None:
+        out.append(pairs[i])
+        i = prev[i]
+    return out[::-1]
+
+
+def canon_line(raw):
+    """ltidx が索引に入れるソース行と同じ形(前後の空白を除き 200 バイトまで、タブと改行は空白)。"""
+    s = raw.strip()[:200]
+    return s.translate(bytes.maketrans(b'\t\r\n', b'   ')).decode('utf-8', 'replace')
+
+
+class Part:
+    """1 つの構成(Debug、Release など)の索引。名前はファイル名の拡張子を除いたもの。"""
+
+    def __init__(self, path):
         self.path = path
-        self.root = os.path.abspath(root)
+        self.name = os.path.splitext(os.path.basename(path))[0]
         self.mtime = os.path.getmtime(path)
 
-    def rows(self, keep):
-        """keep(bytes の行) が真の行だけを (sym, role, caller, path, line, col, src) にして返す。"""
-        out = []
-        with open(self.path, 'rb') as f:
-            for raw in f:
-                if not keep(raw):
-                    continue
-                p = raw.rstrip(b'\r\n').split(b'\t', 4)
-                if len(p) < 5:
-                    continue
-                loc = p[3].rsplit(b':', 2)
-                out.append((p[0].decode('utf-8', 'replace'), p[1].decode(), p[2].decode('utf-8', 'replace'),
-                            loc[0].decode('utf-8', 'replace'), int(loc[1]), int(loc[2]),
-                            p[4].decode('utf-8', 'replace')))
-        return out
 
-    def skips(self, paths):
-        """paths のファイルについて、コメントと無効な #if の範囲を {path: [(kind, (l,c), (l,c))]} で返す。"""
-        res = {}
-        sp = self.path + '.skip.tsv'
-        if not os.path.exists(sp):
-            return res
-        want = {p.encode('utf-8') for p in paths}
-        with open(sp, 'rb') as f:
-            next(f, None)
-            for raw in f:
-                p = raw.rstrip(b'\r\n').split(b'\t')
-                if len(p) != 4 or p[0] not in want:
-                    continue
-                b, e = (tuple(int(x) for x in s.split(b':')) for s in p[2:4])
-                res.setdefault(p[0].decode('utf-8'), []).append((p[1].decode(), b, e))
+class Index:
+    """1 つ以上の構成の索引をまとめて引く。行は和集合にし、一部の構成にしか無い行には構成名を付ける。"""
+
+    def __init__(self, paths, root):
+        self.root = os.path.abspath(root)
+        self.parts = [Part(p) for p in paths]
+        self.mtime = min(p.mtime for p in self.parts)  # 鮮度は最も古い索引で判定する
+        self._seen = None
+        self._fresh = None
+        self._lines = {}
+        self._maps = {}  # (構成名, path) -> 行の付け直しの対応。rows() が作り、skips() も使う
+
+    def _current(self, path):
+        if path not in self._lines:
+            try:
+                with open(os.path.join(self.root, path), 'rb') as f:
+                    data = f.read()
+            except OSError:
+                data = None
+            self._lines[path] = None if data is None else [canon_line(x) for x in data.split(b'\n')]
+        return self._lines[path]
+
+    def _stale(self, part):
+        """その索引の後に変わった(か消えた)、索引にあるファイル。"""
+        out = set()
+        for path in self.freshness()[0]:
+            try:
+                if os.path.getmtime(os.path.join(self.root, path)) > part.mtime:
+                    out.add(path)
+            except OSError:
+                out.add(path)
+        return out | {p for p in self.seen()[part.name] if not os.path.exists(os.path.join(self.root, p))}
+
+    def _line_map(self, path, anchors):
+        """索引にある (行, ソース行) を今のファイルから探し、{索引の行: 今の行 か None}。
+        1) 索引でも今のファイルでも 1 回しか現れない行を対応づけ、今の行番号が増えていく最長の並びだけを固定する
+           (行の入れ替えで食い違う対応は捨てる)。
+        2) 残りの行(`Run();` のように何度も現れる行など)は、前後の固定した行の間だけを、
+           直前に対応づけた行のずれの近くから探す。1 つの行に 2 つを割り当てない。"""
+        old = {}
+        for line, src in anchors:
+            old.setdefault(line, src)
+        lines = sorted(old)
+        cur = self._current(path)
+        if cur is None:
+            return {line: None for line in lines}
+        pos = {}
+        for i, s in enumerate(cur, 1):
+            pos.setdefault(s, []).append(i)
+        count = {}
+        for s in old.values():
+            count[s] = count.get(s, 0) + 1
+        pairs = [(o, pos[old[o]][0]) for o in lines if count[old[o]] == 1 and len(pos.get(old[o], ())) == 1]
+        res = dict(longest_increasing(pairs))
+        fixed = sorted(res)
+        prev_o, prev_n = 0, 0
+        for o in lines:
+            if o in res:
+                prev_o, prev_n = o, res[o]
+                continue
+            i = bisect.bisect_right(fixed, o)
+            hi = res[fixed[i]] if i < len(fixed) else len(cur) + 1
+            cand = pos.get(old[o], [])
+            want = o + (prev_n - prev_o)
+            j = bisect.bisect_left(cand, want)
+            best = None
+            for n in (cand[j - 1] if j > 0 else None, cand[j] if j < len(cand) else None):
+                if n is not None and prev_n < n < hi and (best is None or abs(n - want) < abs(best - want)):
+                    best = n
+            if best is None and j < len(cand) and cand[j] <= prev_n:  # want が直前の行より前にある
+                k = bisect.bisect_right(cand, prev_n)
+                best = cand[k] if k < len(cand) and cand[k] < hi else None
+            res[o] = best
+            if best is not None:
+                prev_o, prev_n = o, best
         return res
 
-    def tu_status(self):
-        """(TU 数, [(エラーのあった TU, 最初のエラー)], TU の主ファイルの集合)"""
-        tp = self.path + '.tu.tsv'
+    def _set_map(self, part, path, lmap):
+        known = sorted((o, n - o) for o, n in lmap.items() if n is not None)
+        self._maps[(part.name, path)] = (lmap, [o for o, _ in known], [d for _, d in known])
+
+    def shift_at(self, part, path, line):
+        """変わったファイルで、索引の line 行が今どれだけずれているか(最も近い、対応のついた行から)。"""
+        m = self._maps.get((part.name, path))
+        if not m or not m[1]:
+            return 0
+        olds, shifts = m[1], m[2]
+        i = bisect.bisect_left(olds, line)
+        near = [k for k in (i - 1, i) if 0 <= k < len(olds)]
+        return shifts[min(near, key=lambda k: abs(olds[k] - line))]
+
+    def _relocate(self, part, path, line):
+        """(今の行番号, 注記)。行が見つからなければ、近くの変わっていない行のずれから推定する。"""
+        cur = self._current(path)
+        if cur is None:
+            return line, 'file deleted after indexing'
+        new = self._maps[(part.name, path)][0].get(line)
+        if new is not None:
+            return new, ('' if new == line else f'moved from line {line}')
+        shift = self.shift_at(part, path, line)
+        est = min(max(line + shift, 1), max(len(cur), 1))
+        return est, 'line changed or removed after indexing' + (f'; estimated from line {line}' if est != line else '')
+
+    def rows(self, keep):
+        """keep(bytes の行) が真の行だけを (sym, role, caller, path, line, col, src, note, configs) にして返す。
+        note は行の付け直しの注記、configs はその行がある構成名の frozenset。
+        索引の後に変わったファイルの行は、索引にあるソース行の文字列で今のファイルから探し直す。"""
+        merged = {}
+        for part in self.parts:
+            stale = self._stale(part)
+            sb = {p.encode('utf-8') for p in stale}
+            anchors, picked = {}, []
+            with open(part.path, 'rb') as f:
+                for raw in f:
+                    hit = keep(raw)
+                    if not hit:  # 変わったファイルの行は、行の付け直しの手がかりとして読む
+                        if not sb:
+                            continue
+                        q = raw.split(b'\t', 4)
+                        if len(q) < 5 or q[3].rsplit(b':', 2)[0] not in sb:
+                            continue
+                    p = raw.rstrip(b'\r\n').split(b'\t', 4)
+                    if len(p) < 5:
+                        continue
+                    loc = p[3].rsplit(b':', 2)
+                    path, src = loc[0].decode('utf-8', 'replace'), p[4].decode('utf-8', 'replace')
+                    if path in stale:
+                        anchors.setdefault(path, []).append((int(loc[1]), src))
+                    if hit:
+                        picked.append((p, path, int(loc[1]), int(loc[2]), src))
+            for path, a in anchors.items():
+                self._set_map(part, path, self._line_map(path, a))
+            for p, path, line, col, src in picked:
+                note = ''
+                if path in stale:
+                    line, note = self._relocate(part, path, line)
+                k = (p[0].decode('utf-8', 'replace'), p[1].decode(), p[2].decode('utf-8', 'replace'), path, line, col)
+                if k in merged:
+                    merged[k][2].add(part.name)
+                    if merged[k][1] and not note:  # 付け直しの要らない(新しい)構成のソース行を採る
+                        merged[k][0:2] = [src, note]
+                else:
+                    merged[k] = [src, note, {part.name}]
+        # 古い構成で行を推定した参照は、別の構成に同じ参照(行以外が同じ)の確かな行があれば捨てる
+        exact = {}
+        for k, v in merged.items():
+            if not v[1].startswith('line changed'):
+                exact.setdefault(k[:4] + (k[5],), set()).update(v[2])
+        return [k + (v[0], v[1], frozenset(v[2])) for k, v in merged.items()
+                if not (v[1].startswith('line changed') and exact.get(k[:4] + (k[5],), set()) - v[2])]
+
+    def skips(self, paths):
+        """paths のファイルについて、コメントと無効な #if の範囲を {path: [(kind, (l,c), (l,c), 構成名)]} で返す。
+        索引の後に変わったファイルの範囲は、rows() が作った行の対応で近くのずれだけ動かす(rows() の後に呼ぶ)。"""
+        res = {}
+        want = {p.encode('utf-8') for p in paths}
+        for part in self.parts:
+            sp = part.path + '.skip.tsv'
+            if not os.path.exists(sp):
+                continue
+            with open(sp, 'rb') as f:
+                next(f, None)
+                for raw in f:
+                    p = raw.rstrip(b'\r\n').split(b'\t')
+                    if len(p) != 4 or p[0] not in want:
+                        continue
+                    b, e = (tuple(int(x) for x in s.split(b':')) for s in p[2:4])
+                    path = p[0].decode('utf-8')
+                    if (part.name, path) in self._maps:
+                        b = (b[0] + self.shift_at(part, path, b[0]), b[1])
+                        e = (e[0] + self.shift_at(part, path, e[0]), e[1])
+                    res.setdefault(path, []).append((p[1].decode(), b, e, part.name))
+        return res
+
+    def seen(self):
+        """{構成名: その構成のどれかの TU が読んだファイルの集合}。TU の主ファイル、コメントか無効な #if のあるファイル、
+        索引に行のあるファイル。参照もコメントも無いヘッダーは数えられない。"""
+        if self._seen is None:
+            self._seen = {}
+            for part in self.parts:
+                s = set(self._tu(part)[2])
+                raw_paths = set()
+                with open(part.path, 'rb') as f:
+                    last = None
+                    for raw in f:
+                        q = raw.split(b'\t', 4)
+                        if len(q) < 5:
+                            continue
+                        loc = q[3]
+                        if last is not None and loc.startswith(last) and loc[len(last):len(last) + 1] == b':':
+                            continue  # 同じファイルの行が続く(ltidx は TU ごとにまとめて書く)
+                        last = loc.rsplit(b':', 2)[0]
+                        raw_paths.add(last)
+                sp = part.path + '.skip.tsv'
+                if os.path.exists(sp):
+                    with open(sp, 'rb') as f:
+                        next(f, None)
+                        raw_paths.update(raw.split(b'\t', 1)[0] for raw in f)
+                s.update(p.decode('utf-8', 'replace') for p in raw_paths)
+                self._seen[part.name] = s
+        return self._seen
+
+    def partial(self, r):
+        """その行が、ファイルを読んだ構成の一部にしか無ければ、ある構成名の並び。全部にあれば ''。"""
+        if len(self.parts) < 2:
+            return ''
+        saw = {n for n, s in self.seen().items() if r[3] in s} | set(r[8])
+        return '' if saw <= r[8] else ', '.join(sorted(r[8]))
+
+    def _tu(self, part):
+        tp = part.path + '.tu.tsv'
         total, bad, files = 0, [], set()
         if os.path.exists(tp):
             with open(tp, encoding='utf-8', errors='replace') as f:
@@ -73,33 +276,100 @@ class Index:
                         bad.append((self.rel(c[0]), c[5] if len(c) > 5 else ''))
         return total, bad, files
 
+    def tu_status(self):
+        """(TU 数, [(エラーのあった TU, 最初のエラー, 構成名)], TU の主ファイルの集合)。構成をまたいで足す。"""
+        total, bad, files = 0, [], set()
+        for part in self.parts:
+            t, b, f = self._tu(part)
+            total += t
+            bad += [(p, e, part.name) for p, e in b]
+            files |= f
+        return total, bad, files
+
     def rel(self, p):
         a = os.path.abspath(p)
         if a.lower().startswith(self.root.lower() + os.sep):
             a = a[len(self.root) + 1:]
         return a.replace('\\', '/')
 
+    def freshness(self):
+        """索引の後に変わったソースと、どの構成でも読まれていない新しいソース(TU の候補)。"""
+        if self._fresh is not None:
+            return self._fresh
+        changed, new = [], []
+        seen = set().union(*self.seen().values())
+        for fp in walk_sources(self, set()):
+            try:
+                m = os.path.getmtime(fp)
+            except OSError:
+                continue
+            if m <= self.mtime:
+                continue
+            rel = self.rel(fp)
+            if rel in seen:
+                changed.append(rel)
+            elif os.path.splitext(fp)[1].lower() in TU_EXT:
+                new.append(rel)
+        missing = sorted(p for p in self.tu_status()[2] if not os.path.exists(os.path.join(self.root, p)))
+        self._fresh = (sorted(changed), sorted(new), missing)
+        return self._fresh
+
     def header(self):
-        total, bad, _ = self.tu_status()
-        built = time.strftime('%Y-%m-%d %H:%M', time.localtime(self.mtime))
-        print(f'index: {self.rel(self.path)} (built {built}; TU {total - len(bad)}/{total} without errors)')
+        def built(part):
+            return time.strftime('%Y-%m-%d %H:%M', time.localtime(part.mtime))
+
+        multi = len(self.parts) > 1
+        if not multi:
+            part = self.parts[0]
+            total, bad, _ = self._tu(part)
+            print(f'index: {self.rel(part.path)} (built {built(part)}; TU {total - len(bad)}/{total} without errors)')
+        else:
+            print(f'index: {len(self.parts)} configurations, merged')
+            for part in self.parts:
+                total, b, _ = self._tu(part)
+                print(f'  {part.name}: {self.rel(part.path)} (built {built(part)}; TU {total - len(b)}/{total} without errors)')
+            print('  references found only in some of the configurations that read the file are marked [only in ...]')
+        bad = {}
+        for p, e, n in self.tu_status()[1]:
+            bad.setdefault((p, e), []).append(n)
         if bad:
             print(f'  {len(bad)} TU had parse errors; references only in those TUs may be missing:')
-            for p, e in bad:
-                print(f'    {p}  ({e})')
+            for (p, e), ns in bad.items():
+                print(f'    {p}  ({e})' + (f'  [{", ".join(ns)}]' if multi else ''))
+        changed, new, missing = self.freshness()
+        if changed:
+            print(f'  {len(changed)} source files changed after indexing. Indexed lines in them are re-located by their'
+                  ' source text ([moved from line N] / [line changed or removed after indexing]); rebuild the index for exact results:')
+            for p in changed[:10]:
+                print(f'    {p}')
+            if len(changed) > 10:
+                print(f'    ... {len(changed) - 10} more')
+        if new:
+            print(f'  {len(new)} source files modified after indexing are not read by any indexed configuration'
+                  ' (new files? rebuild the index if they are compiled):')
+            for p in new[:10]:
+                print(f'    {p}')
+            if len(new) > 10:
+                print(f'    ... {len(new) - 10} more')
+        if missing:
+            print(f'  {len(missing)} indexed TU files no longer exist: ' + ', '.join(missing[:10]))
 
 
 def in_range(pos, b, e):
     return b <= pos < e
 
 
-def classify_ranges(ranges, line, col):
-    """(line, col) を含む範囲の (種類, 範囲の表示)。コメントを優先する。"""
-    hit = [(k, b, e) for k, b, e in ranges if in_range((line, col), b, e) or (k == 'inactive' and b[0] <= line <= e[0])]
+def classify_ranges(ranges, line, col, readers):
+    """(line, col) を含む範囲の (種類, 範囲の表示)。コメントを優先する。
+    無効な #if は、そのファイルを読んだ構成(readers)のすべてで無効なときだけ inactive にする。"""
+    hit = [(k, b, e, n) for k, b, e, n in ranges
+           if in_range((line, col), b, e) or (k == 'inactive' and b[0] <= line <= e[0])]
     hit.sort(key=lambda x: x[0] != 'comment')
+    if hit and hit[0][0] == 'inactive' and not readers <= {n for k, _, _, n in hit if k == 'inactive'}:
+        hit = []  # 他の構成ではコンパイルされる
     if not hit:
         return None, ''
-    k, b, e = hit[0]
+    k, b, e, _ = hit[0]
     return k, (f'  [lines {b[0]}-{e[0]}]' if b[0] != e[0] else '')
 
 
@@ -137,7 +407,8 @@ def text_hits(idx, short, excludes):
     hits = []
     for fp in walk_sources(idx, excludes):
         try:
-            data = open(fp, 'rb').read()
+            with open(fp, 'rb') as f:
+                data = f.read()
         except OSError:
             continue
         if sb not in data:
@@ -168,13 +439,18 @@ def by_dir(items):
     return [f'{d}/  {n} matches in {len(fs)} files' for d, (n, fs) in sorted(agg.items())]
 
 
-def fmt(r, show_sym):
-    sym, role, caller, path, line, col, src = r
+def fmt(r, show_sym, idx):
+    sym, role, caller, path, line, col, src, note, _ = r
     s = f'{role:<6} {path}:{line}'
     if show_sym:
         s += f'  {sym}'
     if caller:
         s += f'  [in {caller}]'
+    if note:
+        s += f'  [{note}]'
+    only = idx.partial(r)
+    if only:
+        s += f'  [only in {only}]'
     return s + f'  | {src}'
 
 
@@ -222,14 +498,14 @@ def cmd_refs(a, idx):
     calls = [r for r in target if r[1].startswith('call')]
     uses = sorted((r for r in target if not r[1].startswith(('call',) + DEFS)), key=key)
     defs = sorted((r for r in target if r[1].startswith(DEFS)), key=key)
-    section('calls (resolved by clang)', [fmt(r, show_sym) for r in calls], a.limit)
+    section('calls (resolved by clang)', [fmt(r, show_sym, idx) for r in calls], a.limit)
     if calls:
         print('  (exact: clang resolved each call from the real type of its receiver, whatever the variable is named)')
     if any(r[1].endswith('-using') for r in target):
         print('  (call-using: a call through a using-declaration inside a template, resolved from its instantiations)')
     section('other references (address taken, template arguments, writes, ...)',
-            [fmt(r, show_sym) for r in uses], a.limit)
-    section('definitions and declarations', [fmt(r, show_sym) for r in defs], a.limit)
+            [fmt(r, show_sym, idx) for r in uses], a.limit)
+    section('definitions and declarations', [fmt(r, show_sym, idx) for r in defs], a.limit)
 
     # dep 行: テンプレート本体では未解決。実体化で解決された位置は、その解決先を添える
     at = {}
@@ -247,7 +523,7 @@ def cmd_refs(a, idx):
             mark = '  (instantiations resolve it to ' + ', '.join(resolved) + ' -> probably not the query)'
         else:
             mark = '  (never instantiated; unknown target' + (', same file as the definition)' if r[3] in def_files else ')')
-        dep_lines.append(fmt(r, False) + mark)
+        dep_lines.append(fmt(r, False, idx) + mark)
     print(f'\n== unresolved template calls named "{short}" (dep): {len(dep_lines)}'
           + (f' (+{dep_dup} already listed in calls)' if dep_dup else ''))
     if dep_lines:
@@ -271,11 +547,11 @@ def cmd_refs(a, idx):
             others[r[0]] = others.get(r[0], 0) + 1
     cats = {k: [] for k in ('comment', 'inactive', 'unparsed', 'string', 'macro', 'other')}
     for path, line, col, src, stale, hint in loose:
-        k, span = classify_ranges(ranges.get(path, []), line, col)
+        readers = {n for n, s in idx.seen().items() if path in s}
+        k, span = classify_ranges(ranges.get(path, []), line, col, readers)
         if k is None:
             k = (hint or 'other') if path in parsed else 'unparsed'
         cats[k].append((path, f'{path}:{line}{span}{"  [file changed after indexing]" if stale else ""}  | {src}'))
-    stale_hits = sorted({f'{h[0]}:{h[1]}' for h in hits if h[4] and (h[0], h[1]) in at})
 
     print(f'\n== text matches of "{short}" not in the index: '
           f'{sum(len(v) for v in cats.values())} of {len(hits)} word matches')
@@ -297,8 +573,6 @@ def cmd_refs(a, idx):
             print('    ' + s)
         if len(lines) > a.limit:
             print(f'    ... {len(lines) - a.limit} more (raise --limit)')
-    if stale_hits:
-        print(f'  note: {len(stale_hits)} indexed matches are in files changed after indexing; line numbers may be off')
     if others:
         top = sorted(others.items(), key=lambda kv: -kv[1])
         print(f'\n== other symbols named "{short}" (not the query): ' +
@@ -328,32 +602,42 @@ def cmd_check(a, idx):
         elif os.path.getmtime(fp) > idx.mtime:
             tag = '  [file changed after indexing]'
         print(f'\n{path}:{line}{":" + str(col) if col else ""}{tag}')
+        multi = len(idx.parts) > 1
         for r in sorted(here, key=lambda r: r[5]):
-            print(f'  indexed: {r[1]} {r[0]} at col {r[5]}' + (f'  [in {r[2]}]' if r[2] else ''))
-        for k, b, e in ranges.get(path, []):
+            only = idx.partial(r)
+            print(f'  indexed: {r[1]} {r[0]} at col {r[5]}' + (f'  [in {r[2]}]' if r[2] else '')
+                  + (f'  [{r[7]}]' if r[7] else '') + (f'  [only in {only}]' if only else ''))
+        shown = set()
+        for k, b, e, n in ranges.get(path, []):
             if (col is not None and in_range((line, col), b, e)) or (col is None and b[0] <= line <= e[0]):
                 what = 'comment' if k == 'comment' else 'inactive #if branch'
-                print(f'  inside {what} {b[0]}:{b[1]}-{e[0]}:{e[1]}')
+                s = f'  inside {what} {b[0]}:{b[1]}-{e[0]}:{e[1]}'
+                s += f'  [{n}]' if multi and k != 'comment' else ''
+                if s not in shown:
+                    shown.add(s)
+                    print(s + ('  (shifted with the nearby indexed lines)' if tag.endswith('indexing]') else ''))
         if not here and path not in ranges and not any(r[3] == path for r in rows):
             print('  file not seen by any indexed TU')
         elif not here:
             print('  no indexed reference on this line')
 
 
-def find_index(root):
-    """<root>/.index/index.tsv。無ければ .index の中の索引本体(.tu.tsv と .skip.tsv 以外の .tsv)が 1 つならそれ。"""
+def find_indexes(root):
+    """<root>/.index の中の索引本体(.tu.tsv と .skip.tsv 以外の .tsv)すべて。構成ごとに 1 つ置く。
+    index.tsv を先頭にし、残りは名前順。"""
     d = os.path.join(root, '.index')
-    p = os.path.join(d, 'index.tsv')
-    if os.path.exists(p) or not os.path.isdir(d):
-        return p
-    main = [f for f in os.listdir(d) if f.endswith('.tsv') and not f.endswith(('.tu.tsv', '.skip.tsv'))]
-    return os.path.join(d, main[0]) if len(main) == 1 else p
+    if not os.path.isdir(d):
+        return []
+    main = sorted((f for f in os.listdir(d) if f.endswith('.tsv') and not f.endswith(('.tu.tsv', '.skip.tsv'))),
+                  key=lambda f: (f != 'index.tsv', f))
+    return [os.path.join(d, f) for f in main]
 
 
 def main(argv=None):
     """戻り値は終了コード。結果は標準出力に書く(MCP サーバーはこれを取り込んで返す)。"""
     ap = argparse.ArgumentParser(prog='ltq', description='C++ reference index query (ltidx TSV)')
-    ap.add_argument('--index', help='index TSV (default <root>/.index/index.tsv, or the only index in <root>/.index)')
+    ap.add_argument('--index', action='append',
+                    help='index TSV; repeat it for several configurations (default: every index in <root>/.index)')
     ap.add_argument('--root', default='.', help='source root the index paths are relative to (default .)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('refs', help='references, definitions, unresolved template calls, and why text matches are missing')
@@ -363,11 +647,13 @@ def main(argv=None):
     c = sub.add_parser('check', help='how the index treats each path:line[:col]')
     c.add_argument('locs', nargs='+')
     a = ap.parse_args(argv)
-    index = a.index or find_index(a.root)
-    if not os.path.exists(index):
-        print(f'index not found: {os.path.abspath(index)}  (build it with ltidx, or pass --index)')
+    indexes = a.index or find_indexes(a.root)
+    missing = [p for p in indexes if not os.path.exists(p)]
+    if not indexes or missing:
+        where = missing[0] if missing else os.path.join(a.root, '.index', 'index.tsv')
+        print(f'index not found: {os.path.abspath(where)}  (build it with ltidx, or pass --index)')
         return 2
-    idx = Index(index, a.root)
+    idx = Index(indexes, a.root)
     (cmd_refs if a.cmd == 'refs' else cmd_check)(a, idx)
     return 0
 

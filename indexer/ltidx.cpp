@@ -121,8 +121,8 @@ public:
     unsigned Line = SM.getSpellingLineNumber(FL), Col = SM.getSpellingColumnNumber(FL);
     llvm::StringRef Buf = SM.getBufferData(FID);
     unsigned Off = SM.getFileOffset(FL);
-    size_t B = Buf.rfind('\n', Off == 0 ? 0 : Off - 1);
-    B = (B == llvm::StringRef::npos || Off == 0) ? 0 : B + 1;
+    size_t B = Buf.rfind('\n', Off);  // [0, Off) を探す。列 1 のトークンでも直前の改行を見つける
+    B = B == llvm::StringRef::npos ? 0 : B + 1;
     size_t E = Buf.find('\n', Off);
     std::string Src = Buf.slice(B, E == llvm::StringRef::npos ? Buf.size() : E).trim().str();
     if (Src.size() > 200) Src.resize(200);

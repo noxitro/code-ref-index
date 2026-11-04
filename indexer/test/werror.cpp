@@ -7,3 +7,5 @@ struct Derived : Base {
   void F() override;
   void G();  // -Winconsistent-missing-override
 };
+int Value();
+Base *Global = nullptr;  // 列 1 の参照。ソース行に前の行を連結しない

@@ -26,7 +26,7 @@ code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>]
 ```
 
 - `--root` の既定は、起動されたときのカレントフォルダです。Copilot CLI は作業フォルダで起動します
-- `--index` の既定は `<ルート>\.index\index.tsv` です。無いときは、`.index` の中の索引本体が 1 つならそれを使います
+- `--index` を省くと、`<ルート>\.index` の中の索引本体(構成ごとの `<名前>.tsv`)をすべてまとめて引きます
 - 環境変数 `CRI_ROOT` と `CRI_INDEX` でも指定できます
 
 ## Copilot CLI で使う

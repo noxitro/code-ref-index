@@ -14,6 +14,9 @@ rem /WX: clang-only warnings must not fail the TU
 if not exist out\werror mkdir out\werror
 > out\werror\compile_commands.json echo [{"directory":"%D%","file":"%D%werror.cpp","arguments":["cl.exe","/c","/std:c++17","/W4","/WX","werror.cpp"]}]
 ..\build\ltidx.exe -p out\werror -root . -o out\werror\werror.tsv 2> out\werror\stderr.txt || (echo FAIL: werror.cpp failed with /WX & type out\werror\stderr.txt & set RC=1)
+rem The source line of a column-1 reference must not include the previous line
+findstr /c:"werror.cpp:11:1" out\werror\werror.tsv >nul || (echo FAIL: no reference at werror.cpp:11:1 & set RC=1)
+findstr /c:"Value(); Base" out\werror\werror.tsv >nul && (echo FAIL: source line joined with the previous line & set RC=1)
 if %RC%==0 echo PASS
 pause
 exit /b %RC%

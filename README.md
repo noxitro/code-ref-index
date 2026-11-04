@@ -38,7 +38,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 
 1. **LLVM を用意する**: 公式リリースの `clang+llvm-<版>-x86_64-pc-windows-msvc.tar.xz` を展開します(MSI 版は不可)。動作を確かめた版は 23.1.4 です
 2. **ltidx をビルドする**: `indexer\build.bat` をダブルクリックします。LLVM の場所は環境変数 `LLVM_ROOT` で指定します(既定 `E:\tools\llvm-23.1.4`)
-3. **索引を作る**: 対象プロジェクトの `compile_commands.json` を用意し、`scripts\index-project.bat -Root <ソースのルート> -Cdb <compile_commands.json のフォルダ>` を実行します。`<ルート>\.index\` に索引ができます(プロジェクトの `.gitignore` に `.index/` を足してください)
+3. **索引を作る**: 対象プロジェクトの `compile_commands.json` を用意し、`scripts\index-project.bat -Root <ソースのルート> -Cdb <compile_commands.json のフォルダ>` を実行します。`<ルート>\.index\` に索引ができます(プロジェクトの `.gitignore` に `.index/` を足してください)。Debug/Release やプラットフォームなど構成が複数あるときは、構成ごとの `compile_commands.json` で `-Name <構成名>` を付けて作ると、まとめて引けます
 4. **Copilot に登録する**: Copilot CLI なら `scripts\register-copilot.bat` をダブルクリックします(中身は次の 1 行です)。以後、どのプロジェクトでも作業フォルダの `.index` を自動で使います
 
    ```bat
