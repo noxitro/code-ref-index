@@ -1,9 +1,11 @@
-﻿# 条件 A(rg のみ)/ B(LSP)/ C(索引)/ D(LSP + 指示)/ E(ltq CLI)/ F(MCP)/ G(MCP + 指示)で
-# Copilot CLI に 1 問を解かせ、セッションを記録する。
+﻿# 条件 A(rg のみ)/ B(LSP)/ C(索引)/ D(LSP + 指示)/ E(ltq CLI)/ F(MCP)/ G(MCP + 指示)/
+# H(G の索引の自動更新を止めたもの)で Copilot CLI に 1 問を解かせ、セッションを記録する。
+# 問題に edit があれば、実行の前に作業フォルダのソースを書き換え、実行の後に中身と更新日時を元に戻す
+# (コードを変えた後の問い合わせ。索引は変える前のソースで作ったもの)。
 # Copilot に渡すのは読み取り専用のツール(view / rg / grep / glob / lsp / MCP)だけ。書き込みは渡さない。
 # シェルは条件 E だけで渡し、実行を許すのは ltq コマンドだけにする。
 param(
-    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G')][string]$Cond,
+    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H')][string]$Cond,
     [Parameter(Mandatory)][string]$TaskId,
     [int]$Rep = 1,
     [string]$Model = 'gpt-6-luna',
@@ -11,6 +13,7 @@ param(
     [string]$Index = 'nox.tsv',     # 条件 C・E・F・G で使う索引($IndexDir 配下のファイル名)
     [string]$Workspace = $env:CRI_BENCH_WORKSPACE,  # 解析対象のソースのコピー(.github と .index を書き換える)
     [string]$IndexDir = $env:CRI_BENCH_INDEXDIR,    # ltidx で作った索引の置き場所
+    [string]$Cdb = '',              # 条件 F・G・H の自動更新が使う compile_commands.json のフォルダ(既定 <作業フォルダ>\.cdb)
     [string]$Clangd = 'clangd',     # 条件 B・D の clangd
     [string]$Tasks = 'tasks.json',          # 問題と正解(bench 配下。公開しない別のコードベースの問題は local\tasks-<名前>.json に置く)
     [string]$Format = 'answer-format.md'    # 回答の書式(bench 配下。local\ に置いたものも指定できる)
@@ -18,7 +21,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $bench = $PSScriptRoot
 if (-not $Workspace -or -not (Test-Path $Workspace)) { throw 'set -Workspace (or CRI_BENCH_WORKSPACE)' }
-if ($Cond -in 'C', 'E', 'F', 'G' -and (-not $IndexDir -or -not (Test-Path "$IndexDir\$Index"))) {
+if ($Cond -in 'C', 'E', 'F', 'G', 'H' -and (-not $IndexDir -or -not (Test-Path "$IndexDir\$Index"))) {
     throw "index not found: $IndexDir\$Index (set -IndexDir or CRI_BENCH_INDEXDIR)"
 }
 $ws = $Workspace
@@ -62,14 +65,23 @@ switch ($Cond) {
         $tools = 'view', 'rg', 'grep', 'glob', 'powershell'
         $allow = 'view', 'rg', 'grep', 'glob', 'shell(ltq)', 'shell(ltq:*)'
     }
-    { $_ -in 'F', 'G' } {
-        # 段階 3 の MCP。作業フォルダの .mcp.json に登録する(F は指示なし、G は指示あり)。シェルは渡さない
+    { $_ -in 'F', 'G', 'H' } {
+        # 段階 3 の MCP。作業フォルダの .mcp.json に登録する(F は指示なし、G・H は指示あり)。シェルは渡さない
         New-Item -ItemType Directory "$ws\.github", "$ws\.index" | Out-Null
-        if ($Cond -eq 'G') { Copy-Item "$bench\mcp-instructions.md" "$ws\.github\copilot-instructions.md" }
-        foreach ($s in '', '.tu.tsv', '.skip.tsv') { Copy-Item "$IndexDir\$Index$s" "$ws\.index\index.tsv$s" }
+        if ($Cond -in 'G', 'H') { Copy-Item "$bench\mcp-instructions.md" "$ws\.github\copilot-instructions.md" }
+        # 自動更新には .deps.tsv と作り方の記録(.recipe.json)が要る。記録はこの作業フォルダ向けに作る
+        foreach ($s in '', '.tu.tsv', '.skip.tsv', '.deps.tsv') {
+            if (Test-Path "$IndexDir\$Index$s") { Copy-Item "$IndexDir\$Index$s" "$ws\.index\index.tsv$s" }
+        }
+        $cdbDir = if ($Cdb) { $Cdb } else { "$ws\.cdb" }
+        [ordered]@{ version = 1; root = (Resolve-Path $ws).Path; cdb = $cdbDir; out = "$((Resolve-Path $ws).Path)\.index\index.tsv"
+            jobs = [Math]::Max(1, [int]([Environment]::ProcessorCount / 2)); makeCdb = $null } |
+            ConvertTo-Json | Set-Content -LiteralPath "$ws\.index\index.tsv.recipe.json" -Encoding utf8NoBOM
+        # 索引の時刻はコピー元のまま(Copy-Item は更新日時を保つ)。ソースの時刻と比べて古さを決めるので触らない
         Get-FileHash "$ws\.index\index.tsv" | Out-Null
         $server = (Resolve-Path (Join-Path $bench '..\mcp\server.py')).Path
-        @{ mcpServers = @{ 'code-ref-index' = @{ type = 'local'; command = 'python'; args = @('-I', $server); tools = @('*') } } } |
+        $serverArgs = @('-I', $server) + $(if ($Cond -eq 'H') { @('--no-auto-update') } else { @() })
+        @{ mcpServers = @{ 'code-ref-index' = @{ type = 'local'; command = 'python'; args = $serverArgs; tools = @('*') } } } |
             ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$ws\.mcp.json"
         $tools = 'view', 'rg', 'grep', 'glob', 'code-ref-index'
         $allow = $tools
@@ -82,6 +94,20 @@ $task = (Get-Content "$bench\$Tasks" -Raw -Encoding utf8 | ConvertFrom-Json) | W
 if (-not $task) { throw "unknown task $TaskId" }
 $prompt = $task.prompt + "`n`n" + (Get-Content "$bench\$Format" -Raw -Encoding utf8)
 
+# 問題の edit を当てる(行は 1 始まり。insert はその行の前に足す、delete はその行を消す)。終わったら元に戻す
+$saved = @()
+foreach ($e in @($task.edit | Where-Object { $_ })) {
+    $fp = Join-Path $ws $e.file
+    $bytes = [IO.File]::ReadAllBytes($fp)
+    $saved += , @($fp, $bytes, (Get-Item -LiteralPath $fp).LastWriteTimeUtc)
+    $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+    $text = [Text.UTF8Encoding]::new($false).GetString($bytes, [int]$bom * 3, $bytes.Length - [int]$bom * 3)
+    $eol = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $lines = [Collections.Generic.List[string]]::new([string[]]($text -split "`r?`n"))
+    if ($e.delete) { $lines.RemoveAt($e.line - 1) } else { $lines.Insert($e.line - 1, [string]$e.insert) }
+    [IO.File]::WriteAllText($fp, ($lines -join $eol), [Text.UTF8Encoding]::new($bom))
+}
+
 $name = if ($Round -eq 'v1') { "$TaskId-$Cond-r$Rep" } else { "$Round-$TaskId-$Cond-r$Rep" }
 New-Item -ItemType Directory "$bench\runs" -Force | Out-Null
 $t0 = Get-Date
@@ -90,7 +116,20 @@ try {
     copilot -p $prompt --model $Model --trust-folder --available-tools @tools --allow-tool @allow -s `
         --share "$bench\runs\$name.md" --log-level error *> "$bench\runs\$name.out.txt"
     $code = $LASTEXITCODE
-} finally { Pop-Location; $env:PATH = $oldPath }
+} finally {
+    Pop-Location
+    $env:PATH = $oldPath
+    # 裏の作り直し(自動更新)が続いていれば終わるまで待つ。次の実行が .index を消すとぶつかる
+    $deadline = (Get-Date).AddMinutes(10)
+    while ((Test-Path "$ws\.index\update.lock") -and (Get-Date) -lt $deadline) {
+        try { Remove-Item "$ws\.index\update.lock" -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 }
+    }
+    [array]::Reverse($saved)  # 同じファイルを何度も書き換えたときは、最初の中身に戻す
+    foreach ($x in $saved) {
+        [IO.File]::WriteAllBytes($x[0], $x[1])
+        (Get-Item -LiteralPath $x[0]).LastWriteTimeUtc = $x[2]
+    }
+}
 $sec = [int]((Get-Date) - $t0).TotalSeconds
 # --trust-folder は --session-id と併用できないので、実行後に最新のセッションを引く
 $sid = (Get-ChildItem "$env:USERPROFILE\.copilot\session-state" -Directory | Where-Object LastWriteTime -ge $t0 |

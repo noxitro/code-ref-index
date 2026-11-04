@@ -20,7 +20,7 @@ for d in (bench, os.path.join(bench, "local")):
                     sys.exit(f"問題の id {t['id']} が {task_src[t['id']]} と {path} の両方にある")
                 tasks[t["id"]], task_src[t["id"]] = t, path
 db = sqlite3.connect("file:" + os.path.join(home, "session-store.db") + "?mode=ro", uri=True)
-LOC = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:h|hh|hpp|hxx|c|cc|cpp|cxx|inl|ipp|inc|ixx|cppm|tpp|txx|m|mm)):(\d+)")
+LOC = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:h|hh|hpp|hxx|c|cc|cpp|cxx|inl|ipp|inc|ixx|cppm|tpp|txx|m|mm|vcxproj|props|targets|cmake|json|hlsl)):(\d+)")  # C++ 以外は rg 向きの問題(R3)用
 
 
 def normalize(path, truth_paths):
