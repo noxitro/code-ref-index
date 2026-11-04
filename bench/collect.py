@@ -8,9 +8,17 @@ import collections, json, os, re, sqlite3, statistics, sys
 bench = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(__file__))
 home = os.path.expanduser("~/.copilot")
 # tasks.json(Nox)と tasks-<名前>.json(別のコードベース。公開しないものは local\ に置く)。id はファイルをまたいで一意にする
-task_dirs = [d for d in (bench, os.path.join(bench, "local")) if os.path.isdir(d)]
-tasks = {t["id"]: t for d in task_dirs for fn in sorted(os.listdir(d)) if re.fullmatch(r"tasks(-[\w-]+)?\.json", fn)
-         for t in json.load(open(os.path.join(d, fn), encoding="utf-8"))}
+tasks, task_src = {}, {}
+for d in (bench, os.path.join(bench, "local")):
+    for fn in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not re.fullmatch(r"tasks(-[\w-]+)?\.json", fn):
+            continue
+        path = os.path.join(d, fn)
+        with open(path, encoding="utf-8") as f:
+            for t in json.load(f):
+                if t["id"] in tasks:
+                    sys.exit(f"問題の id {t['id']} が {task_src[t['id']]} と {path} の両方にある")
+                tasks[t["id"]], task_src[t["id"]] = t, path
 db = sqlite3.connect("file:" + os.path.join(home, "session-store.db") + "?mode=ro", uri=True)
 LOC = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:h|hh|hpp|hxx|c|cc|cpp|cxx|inl|ipp|inc|ixx|cppm|tpp|txx|m|mm)):(\d+)")
 
@@ -22,11 +30,14 @@ def normalize(path, truth_paths):
     cands = [p for p in truth_paths if p.endswith("/" + path)]
     return cands[0] if len(cands) == 1 else path
 
-rows = []
+rows, no_task = [], collections.Counter()
 for line in open(os.path.join(bench, "runs", "index.jsonl"), encoding="utf-8-sig"):
     r = json.loads(line)
     if r["rep"] == 0:
         continue  # 試運転
+    if r["task"] not in tasks:
+        no_task[r["task"]] += 1  # 問題ファイルが手元に無い(local\ を置いていない)
+        continue
     ev = [json.loads(l) for l in open(os.path.join(home, "session-state", r["session"], "events.jsonl"), encoding="utf-8")]
     tools = collections.Counter(e["data"]["toolName"] for e in ev if e["type"] == "tool.execution_start")
     result_chars = 0
@@ -58,6 +69,8 @@ with open(os.path.join(bench, "runs", "summary.tsv"), "w", encoding="utf-8") as 
     for x in rows:
         f.write("\t".join(str(x[k]) for k in keys) + "\n")
 
+for t, n in sorted(no_task.items()):
+    print(f"注意: 問題 {t} が問題ファイルに無いので、{n} 回の実行を集計から外した", file=sys.stderr)
 print("cond  n  correct  model_calls  tool_calls  view  input_tokens  uncached  output  credits  sec")
 for rd, c in sorted({(x["round"], x["cond"]) for x in rows}):
     xs = [x for x in rows if x["cond"] == c and x["round"] == rd]
