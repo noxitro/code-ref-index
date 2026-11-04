@@ -198,7 +198,7 @@ class LtidxTest(unittest.TestCase):
     def test_root_written_differently(self):
         # ルートを 8.3 形式の短い名前で渡し、compile_commands.json は長い名前(MSBuild が返す形)。どちらでもルート配下と判定する
         import ctypes
-        long_dir = os.path.join(self.root, 'a-long-directory-name')
+        long_dir = os.path.realpath(os.path.join(self.root, 'a-long-directory-name'))  # 一時フォルダ自体が短い名前のことがある
         buf = ctypes.create_unicode_buffer(1024)
         os.makedirs(long_dir)
         if not ctypes.windll.kernel32.GetShortPathNameW(long_dir, buf, 1024) or buf.value.lower() == long_dir.lower():
@@ -211,7 +211,7 @@ class LtidxTest(unittest.TestCase):
                                capture_output=True, text=True, encoding='utf-8', errors='replace')
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue(self.has('Run', 'call', 'a.cpp:2:15', out='o.tsv'), root)
-        self.root = os.path.dirname(long_dir)  # tearDown で消す
+        self.root = os.path.dirname(long_dir)  # tearDown で消す(実体のパスで同じフォルダ)
 
     def test_update_needs_previous_index(self):
         self.write('a.cpp', 'void A() {}\n', [])
