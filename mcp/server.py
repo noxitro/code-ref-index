@@ -1,4 +1,4 @@
-"""code-ref-index の MCP サーバー(stdio)。ltq の refs / check をツールとして公開する。
+"""cxxref の MCP サーバー(stdio)。ltq の refs / check をツールとして公開する。
 
   python -I server.py [--root <ソースのルート>] [--index <索引.tsv>]
 

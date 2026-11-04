@@ -1,6 +1,6 @@
-# code-ref-index
+# cxxref
 
-[![CI](https://github.com/noxitro/code-ref-index/actions/workflows/ci.yml/badge.svg)](https://github.com/noxitro/code-ref-index/actions/workflows/ci.yml)
+[![CI](https://github.com/noxitro/cxxref/actions/workflows/ci.yml/badge.svg)](https://github.com/noxitro/cxxref/actions/workflows/ci.yml)
 
 clang(libtooling)で事前に作った C++ の参照索引を、GitHub Copilot などのエージェントが少ない往復で確実に引けるようにする道具です。
 
@@ -54,6 +54,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
    ```
 
    VS Code や、プロジェクト単位の登録は [mcp/README.md](mcp/README.md) を参照してください
+   - MCP サーバーの名前は、旧名の `code-ref-index` のままです。ツールの名前(`code-ref-index-refs` など)がこの名前から付き、計測はこの名前で行ったためです
 5. **使い方の指示を足す(推奨)**: [bench/mcp-instructions.md](bench/mcp-instructions.md) の内容を、プロジェクトの `.github/copilot-instructions.md` に足します
 
 ## 動作確認

@@ -1,5 +1,5 @@
 @echo off
-rem Register the code-ref-index MCP server in the Copilot CLI user config (~/.copilot/mcp-config.json).
+rem Register the cxxref MCP server (server name: code-ref-index) in the Copilot CLI user config (~/.copilot/mcp-config.json).
 rem The server runs in Copilot's working folder and uses its .index\ (build it with index-project.bat).
 setlocal
 rem copilot is copilot.cmd when installed from npm, so use call to come back here

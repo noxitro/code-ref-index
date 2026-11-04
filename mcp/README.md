@@ -1,4 +1,4 @@
-# code-ref-index MCP サーバー
+# cxxref の MCP サーバー
 
 ## 目的
 
