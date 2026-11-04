@@ -8,6 +8,7 @@
 // コメントと無効な #if の範囲も別ファイル(<out>.skip.tsv)に出す。テキスト検索の一致が
 // 索引に無い理由を、問い合わせ側(ltq)が答えるのに使う。
 // -update は、前回の索引の後に変わったファイルを読む TU・コマンドの変わった TU・新しい TU だけを解析し直して差し替える。
+// 複数の TU が読むファイルの行の出どころは <out>.own.bin に出す(-update で、解析し直す TU だけが出していた行を消すのに使う)。
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/ExprCXX.h"
@@ -27,6 +28,8 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Endian.h"
+#include "llvm/Support/EndianStream.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -42,6 +45,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 bool codepageToUtf8(unsigned Cp, const char *P, size_t N, std::string &Out);  // codepage.cpp
@@ -552,15 +556,119 @@ llvm::StringRef rowPath(llvm::StringRef Row) {
   return Row.split('\t').first.rsplit(':').first.rsplit(':').first;
 }
 
+uint64_t lineHash(llvm::StringRef L) { return llvm::xxh3_64bits(llvm::arrayRefFromStringRef<uint8_t>(L)); }
+
+// ファイル(ルートからの相対パス)-> 行(索引と .skip.tsv の行)のハッシュ。整列済み・重複なし
+using FileHashes = std::map<std::string, std::vector<uint64_t>>;
+
+void sortUnique(std::vector<uint64_t> &V) {
+  std::sort(V.begin(), V.end());
+  V.erase(std::unique(V.begin(), V.end()), V.end());
+}
+
+// 行の出どころ(<out>.own.bin)。複数の TU が読むファイル F について、F を読む TU すべてが出した行を「共通」とし、
+// TU ごとに共通でない行(実体化・マクロで TU ごとに変わる行)のハッシュだけを持つ。
+// F の行は、どの TU の「共通でない行」にも無ければ、F を読む TU すべてが出したものと分かる。
+//   "LTOWN001" | u64 同じ回の .tu.tsv のハッシュ | u8 正確か | u32 ファイル数 {u32 長さ, パス}
+//   | u32 TU 数 {u32 長さ, TU のパス, u32 ファイルの数 {u32 ファイルの番号, u32 行数, u64 ハッシュ...}}
+// 正確でない(0)のは、出どころの無い前回の索引から -update で作ったもの。共通の行に、消すべき古い行が混ざりうる
+const char OwnMagic[] = "LTOWN001";
+
+struct OwnFile {
+  bool Exact = false;
+  std::map<std::string, FileHashes> Tus;  // pathKey(TU) -> 共通でない行
+};
+
+uint64_t fileHash(const std::string &P) {
+  auto B = llvm::MemoryBuffer::getFile(P);
+  return B ? llvm::xxh3_64bits(llvm::arrayRefFromStringRef<uint8_t>((*B)->getBuffer())) : 0;
+}
+
+// 読めない・壊れている・別の回の索引のものなら、理由を返す
+std::string readOwn(const std::string &P, uint64_t TuHash, OwnFile &O) {
+  auto B = llvm::MemoryBuffer::getFile(P);
+  if (!B) return "無い";
+  llvm::StringRef S = (*B)->getBuffer();
+  bool Bad = false;
+  auto take = [&](size_t N) {
+    if (Bad || S.size() < N) { Bad = true; return llvm::StringRef(); }
+    llvm::StringRef R = S.take_front(N);
+    S = S.drop_front(N);
+    return R;
+  };
+  auto u32 = [&] { llvm::StringRef R = take(4); return Bad ? 0u : llvm::support::endian::read32le(R.data()); };
+  auto u64 = [&] { llvm::StringRef R = take(8); return Bad ? uint64_t(0) : llvm::support::endian::read64le(R.data()); };
+  if (take(8) != OwnMagic) return "形式が違う";
+  if (u64() != TuHash) return ".tu.tsv と組でない(別の回の索引のもの)";
+  O.Exact = take(1) == "\x01";
+  uint32_t NF = u32();
+  if (NF > S.size() / 4) return "壊れている";
+  std::vector<std::string> Files(NF);
+  for (auto &F : Files) F = take(u32()).str();
+  for (uint32_t T = u32(); T-- && !Bad;) {
+    FileHashes &H = O.Tus[pathKey(take(u32()))];
+    for (uint32_t G = u32(); G-- && !Bad;) {
+      uint32_t F = u32();
+      if (F >= Files.size()) Bad = true;
+      std::vector<uint64_t> &V = H[Bad ? "" : Files[F]];
+      for (uint32_t N = u32(); N-- && !Bad;) V.push_back(u64());
+    }
+  }
+  if (Bad || !S.empty()) return "壊れている";
+  return "";
+}
+
+// Tus: TU のパスと、共通でない行
+bool writeOwn(const std::string &P, uint64_t TuHash, bool Exact,
+              const std::vector<std::pair<std::string, const FileHashes *>> &Tus) {
+  std::map<std::string, uint32_t> Ids;
+  for (const auto &[T, H] : Tus)
+    for (const auto &[F, V] : *H) Ids.try_emplace(F, 0);
+  std::vector<const std::string *> Names;
+  for (auto &[F, Id] : Ids) { Id = Names.size(); Names.push_back(&F); }
+  std::error_code EC;
+  llvm::raw_fd_ostream OS(P, EC);
+  if (EC) { llvm::errs() << P << ": " << EC.message() << "\n"; return false; }
+  llvm::support::endian::Writer W(OS, llvm::endianness::little);
+  auto str = [&](llvm::StringRef X) { W.write<uint32_t>(X.size()); OS << X; };
+  OS << OwnMagic;
+  W.write<uint64_t>(TuHash);
+  OS << (Exact ? '\x01' : '\x00');
+  W.write<uint32_t>(Names.size());
+  for (const auto *N : Names) str(*N);
+  W.write<uint32_t>(Tus.size());
+  for (const auto &[T, H] : Tus) {
+    str(T);
+    W.write<uint32_t>(H->size());
+    for (const auto &[F, V] : *H) {
+      W.write<uint32_t>(Ids[F]);
+      W.write<uint32_t>(V.size());
+      for (uint64_t X : V) W.write<uint64_t>(X);
+    }
+  }
+  OS.close();
+  if (OS.has_error()) { llvm::errs() << "write failed: " << P << ": " << OS.error().message() << "\n"; return false; }
+  return true;
+}
+
 // 前回の索引のうち、-update で残すもの
+struct KeptTu {
+  std::string Path, Line;  // Line: .tu.tsv の行
+  std::vector<std::string> Deps;
+  FileHashes Extra;  // 前回の共通でない行
+};
 struct Kept {
-  std::vector<std::string> Rows, Skips, Tus, Deps;
+  std::vector<std::string> Rows, Skips;
+  std::vector<KeptTu> Tus;
+  FileHashes Common;  // 残す行のうち、前回そのファイルを読んだ TU すべてが出した行
+  bool Exact = true;  // 前回の行の出どころが分かった
 };
 
 // 前回の索引と比べて、解析し直す TU(Todo)と残す行(K)を決める。
 // 解析し直すのは、新しい TU・前回失敗した TU・コマンドの変わった TU・前回の後に変わった(消えた)ファイルを読む TU。
 // 前回の行を捨てるのは、変わったファイルと、解析し直す TU か消えた TU だけが読んでいたファイルの行。
-// それ以外のファイル(残す TU も読むヘッダーなど)は、前回の行を残して新しい行を足す。
+// それ以外のファイル(残す TU も読むヘッダーなど)は、残す TU のどれかが前回出した行(.own.bin で分かる)だけを残して、
+// 新しい行を足す。.own.bin が無い古い索引では、前回の行をすべて残す。
 bool planUpdate(const tooling::CompilationDatabase &Cdb, const std::vector<std::string> &All, const std::string &RootN,
                 std::vector<std::string> &Todo, Kept &K) {
   llvm::sys::fs::file_status St;
@@ -577,6 +685,14 @@ bool planUpdate(const tooling::CompilationDatabase &Cdb, const std::vector<std::
   };
   std::map<std::string, OldTu> Old;
   std::vector<std::string> Order, Lines;
+  OwnFile Own;
+  if (std::string Why = readOwn(Out + ".own.bin", fileHash(Out + ".tu.tsv"), Own); !Why.empty() || !Own.Exact) {
+    llvm::errs() << "update: 行の出どころ(" << Out << ".own.bin)が" << (Why.empty() ? "不正確" : Why)
+                 << "なので、複数の TU が読むファイルの前回の行はすべて残します(古い行が残りえます)。"
+                    "-update を付けずに作り直すと直ります\n";
+    K.Exact = false;
+    Own.Tus.clear();
+  }
   readLines(Out + ".tu.tsv", Lines, true);
   for (const auto &L : Lines) {
     llvm::SmallVector<llvm::StringRef, 8> C;
@@ -631,21 +747,44 @@ bool planUpdate(const tooling::CompilationDatabase &Cdb, const std::vector<std::
     NChanged += C;
     if (C || OnlyRedone[D]) Drop.insert(D);
   }
+  // AllExtra: 前回の TU どれかの共通でない行。KeptExtra: そのうち残す TU のもの
+  FileHashes AllExtra, KeptExtra;
   for (const auto &Key : Order) {
-    const OldTu &T = Old[Key];
+    OldTu &T = Old[Key];
     if (!InCdb.count(Key)) ++Removed;
-    if (Redo.count(Key) || !InCdb.count(Key)) continue;
-    K.Tus.push_back(T.Line);
-    for (const auto &D : T.Deps) K.Deps.push_back(T.Path + "\t" + D);
+    bool Keep = !Redo.count(Key) && InCdb.count(Key);
+    FileHashes Extra;
+    if (auto It = Own.Tus.find(Key); It != Own.Tus.end()) Extra = std::move(It->second);
+    for (const auto &[F, V] : Extra) {
+      AllExtra[F].insert(AllExtra[F].end(), V.begin(), V.end());
+      if (Keep) KeptExtra[F].insert(KeptExtra[F].end(), V.begin(), V.end());
+    }
+    if (Keep) K.Tus.push_back({T.Path, T.Line, std::move(T.Deps), std::move(Extra)});
   }
+  for (auto *M : {&AllExtra, &KeptExtra})
+    for (auto &[F, V] : *M) sortUnique(V);
+  static const std::vector<uint64_t> None;
+  // 共通の行は、そのファイルを読む残す TU も出している。共通でない行は、残す TU のどれかが出したものだけを残す
+  auto keep = [&](std::string &L, const std::string &Path, std::vector<std::string> &To) {
+    if (Drop.count(Path)) return;
+    uint64_t H = lineHash(L);
+    auto It = AllExtra.find(Path);
+    if (It != AllExtra.end() && std::binary_search(It->second.begin(), It->second.end(), H)) {
+      auto KIt = KeptExtra.find(Path);
+      const auto &KV = KIt == KeptExtra.end() ? None : KIt->second;
+      if (!std::binary_search(KV.begin(), KV.end(), H)) return;
+    } else {
+      K.Common[Path].push_back(H);
+    }
+    To.push_back(std::move(L));
+  };
   Lines.clear();
   readLines(Out, Lines, false);
-  for (auto &L : Lines)
-    if (!Drop.count(rowPath(L).str())) K.Rows.push_back(std::move(L));
+  for (auto &L : Lines) keep(L, rowPath(L).str(), K.Rows);
   Lines.clear();
   readLines(Out + ".skip.tsv", Lines, true);
-  for (auto &L : Lines)
-    if (!Drop.count(llvm::StringRef(L).split('\t').first.str())) K.Skips.push_back(std::move(L));
+  for (auto &L : Lines) keep(L, llvm::StringRef(L).split('\t').first.str(), K.Skips);
+  for (auto &[F, V] : K.Common) sortUnique(V);
   llvm::errs() << "update: " << NChanged << " files changed, " << Todo.size() << "/" << All.size()
                << " TU to re-index, " << Removed << " TU removed\n";
   return true;
@@ -654,7 +793,7 @@ bool planUpdate(const tooling::CompilationDatabase &Cdb, const std::vector<std::
 // <P>.tmp で <P> をすべて差し替える。どれかが差し替えられなければ何も変えない(新旧の混ざった索引を残さない)。
 // 開かれているファイル(ltq が読んでいる最中など)は Windows では名前を変えられないので、まず古いほうを .old に
 // 退かせる。ここで失敗したら退かせた分を戻す。退かせた後の .tmp -> 本体は、宛先が無いので開かれていても失敗しない
-bool replaceAll(const std::string (&Outs)[4]) {
+bool replaceAll(llvm::ArrayRef<std::string> Outs) {
   std::vector<std::string> Moved;
   auto rollback = [&] {
     for (const auto &P : Moved) llvm::sys::fs::rename(P + ".old", P);
@@ -715,7 +854,7 @@ int main(int argc, const char **argv) {
   Transcoder Trans;
 
   // 書き終えてから差し替える(作っている途中の索引を ltq が読まないように)
-  const std::string Outs[] = {Out, Out + ".tu.tsv", Out + ".skip.tsv", Out + ".deps.tsv"};
+  const std::string Outs[] = {Out, Out + ".tu.tsv", Out + ".skip.tsv", Out + ".deps.tsv", Out + ".own.bin"};
   std::error_code EC;
   llvm::raw_fd_ostream OutS(Outs[0] + ".tmp", EC), TuS(Outs[1] + ".tmp", EC), SkipS(Outs[2] + ".tmp", EC),
       DepS(Outs[3] + ".tmp", EC);
@@ -730,10 +869,19 @@ int main(int argc, const char **argv) {
     if (Seen.insert(R).second) OutS << R << "\n";
   for (auto &S : K.Skips)
     if (SeenSkip.insert(S).second) SkipS << S << "\n";
-  for (auto &T : K.Tus) TuS << T << "\n";
-  for (auto &D : K.Deps) DepS << D << "\n";
-  K = Kept();
+  for (auto &T : K.Tus) {
+    TuS << T.Line << "\n";
+    for (const auto &D : T.Deps) DepS << T.Path << "\t" << D << "\n";
+  }
+  K.Rows = {};
+  K.Skips = {};
 
+  // 解析した TU ごとの、読んだファイルと、出した行のハッシュ(.own.bin を作るのに使う)。
+  // ヘッダーの多くは、どの TU からも同じ行になるので、同じハッシュの並びは 1 つを共有する(Pool。M で守る)
+  using Hashes = std::shared_ptr<const std::vector<uint64_t>>;
+  std::vector<std::vector<std::string>> NewDeps(Todo.size());
+  std::vector<std::map<std::string, Hashes>> NewOwn(Todo.size());
+  std::unordered_map<uint64_t, Hashes> Pool;
   std::atomic<size_t> Next{0}, Ok{0};
   auto Worker = [&] {
     for (size_t I; (I = Next++) < Todo.size();) {
@@ -775,14 +923,36 @@ int main(int argc, const char **argv) {
       if (Good) ++Ok;
       std::string Hash = commandHash(*Cdb, Todo[I]);
       std::set<std::string> Deps(O.Deps.begin(), O.Deps.end());
+      FileHashes Own;
+      std::vector<uint64_t> *Last = nullptr;
+      llvm::StringRef LastPath;
+      auto own = [&](const std::string &L, llvm::StringRef Path) {
+        if (!Last || Path != LastPath) { Last = &Own[Path.str()]; LastPath = Path; }
+        Last->push_back(lineHash(L));
+      };
+      for (const auto &R : O.Rows) own(R, rowPath(R));
+      for (const auto &S : O.Skips) own(S, llvm::StringRef(S).split('\t').first);
+      for (auto &[F, V] : Own) sortUnique(V);
 
       std::lock_guard<std::mutex> L(M);
+      for (auto &[F, V] : Own) {
+        uint64_t Key = llvm::xxh3_64bits(llvm::ArrayRef<uint8_t>(reinterpret_cast<const uint8_t *>(V.data()), V.size() * 8));
+        auto It = Pool.find(Key);
+        if (It != Pool.end() && *It->second == V) {
+          NewOwn[I][F] = It->second;
+        } else {  // 初めての並び(ハッシュが衝突したものは共有しない)
+          auto P = std::make_shared<const std::vector<uint64_t>>(std::move(V));
+          if (It == Pool.end()) Pool.emplace(Key, P);
+          NewOwn[I][F] = std::move(P);
+        }
+      }
       size_t New = 0;
       for (auto &R : O.Rows)
         if (Seen.insert(R).second) { OutS << R << "\n"; ++New; }
       for (auto &S : O.Skips)
         if (SeenSkip.insert(S).second) SkipS << S << "\n";
       for (const auto &D : Deps) DepS << Todo[I] << "\t" << D << "\n";
+      NewDeps[I].assign(Deps.begin(), Deps.end());
       TuS << Todo[I] << "\t" << (Good ? 1 : 0) << "\t" << Diag.Errors << "\t" << llvm::format("%.2f", Sec) << "\t"
           << New << "\t" << Diag.First << "\t" << Hash << "\t" << Cp << "\n";
       llvm::errs() << "[" << (I + 1) << "/" << Todo.size() << "] " << (Good ? "ok " : "NG ")
@@ -796,6 +966,56 @@ int main(int argc, const char **argv) {
   for (auto *S : {&OutS, &TuS, &SkipS, &DepS}) {
     S->close();
     if (S->has_error()) { llvm::errs() << "write failed: " << S->error().message() << "\n"; return 2; }
+  }
+
+  // 行の出どころ。複数の TU が読むファイルごとに、読む TU すべてが出した行(共通)を求め、TU ごとに共通でない行を残す。
+  // 残す TU が前回出した行は、前回の共通の行(K.Common)と前回の共通でない行(KeptTu::Extra)を合わせたもの
+  {
+    size_t NK = K.Tus.size();
+    std::map<std::string, std::vector<size_t>> Readers;  // ファイル -> 読む TU(残す TU は 0..NK-1、解析した TU は NK+I)
+    for (size_t I = 0; I < NK; ++I)
+      for (const auto &D : K.Tus[I].Deps) Readers[D].push_back(I);
+    for (size_t I = 0; I < Todo.size(); ++I)
+      for (const auto &D : NewDeps[I]) Readers[D].push_back(NK + I);
+    static const std::vector<uint64_t> None;
+    auto get = [&](const FileHashes &M, const std::string &F) -> const std::vector<uint64_t> & {
+      auto It = M.find(F);
+      return It == M.end() ? None : It->second;
+    };
+    auto getNew = [&](size_t I, const std::string &F) -> const std::vector<uint64_t> & {
+      auto It = NewOwn[I].find(F);
+      return It == NewOwn[I].end() ? None : *It->second;
+    };
+    std::vector<FileHashes> Extra(NK + Todo.size());
+    for (const auto &[F, R] : Readers) {
+      if (R.size() < 2) continue;
+      const auto &Common = get(K.Common, F);
+      size_t NKept = std::count_if(R.begin(), R.end(), [&](size_t I) { return I < NK; });
+      std::unordered_map<uint64_t, size_t> Count;  // 行 -> 出した TU の数
+      if (NKept)
+        for (uint64_t H : Common) Count[H] += NKept;
+      for (size_t I : R)
+        for (uint64_t H : I < NK ? get(K.Tus[I].Extra, F) : getNew(I - NK, F)) ++Count[H];
+      for (size_t I : R) {
+        std::vector<uint64_t> E;
+        auto add = [&](const std::vector<uint64_t> &V) {
+          for (uint64_t H : V)
+            if (Count[H] < R.size()) E.push_back(H);
+        };
+        if (I < NK) {
+          add(Common);
+          add(get(K.Tus[I].Extra, F));
+          sortUnique(E);
+        } else {
+          add(getNew(I - NK, F));
+        }
+        if (!E.empty()) Extra[I][F] = std::move(E);
+      }
+    }
+    std::vector<std::pair<std::string, const FileHashes *>> Tus;
+    for (size_t I = 0; I < Extra.size(); ++I)
+      if (!Extra[I].empty()) Tus.push_back({I < NK ? K.Tus[I].Path : Todo[I - NK], &Extra[I]});
+    if (!writeOwn(Outs[4] + ".tmp", fileHash(Outs[1] + ".tmp"), !Update || K.Exact || K.Tus.empty(), Tus)) return 2;
   }
   // 索引の時刻は解析を始めた時刻にする。解析の途中で変わったファイルも、次の -update と ltq が「索引の後に変わった」と扱う
   for (const auto &P : Outs) llvm::sys::fs::setLastAccessAndModificationTime(P + ".tmp", Started);

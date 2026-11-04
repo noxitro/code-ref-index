@@ -5,6 +5,7 @@ usage: python -I -m unittest discover -s indexer/test   (ltidx をビルドし�
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -154,6 +155,10 @@ class LtidxTest(unittest.TestCase):
         self.assertIn('2/2 TU to re-index', err)
 
         # 全体の作り直しと同じになる
+        self.assertSameAsFull()
+
+    def assertSameAsFull(self):
+        """-update で作った索引(index.tsv)が、全体の作り直し(full.tsv)と行の集合で一致する。"""
         rc, err = self.run_ltidx(out='.index/full.tsv')
         self.assertEqual(rc, 0, err)
         for suffix in ('', '.skip.tsv', '.deps.tsv'):
@@ -161,7 +166,114 @@ class LtidxTest(unittest.TestCase):
                 u = set(f)
             with open(os.path.join(self.root, '.index', 'full.tsv' + suffix), encoding='utf-8') as f:
                 full = set(f)
-            self.assertEqual(u, full, suffix)
+            self.assertEqual(u - full, set(), 'stale rows in index.tsv' + suffix)
+            self.assertEqual(full - u, set(), 'missing rows in index.tsv' + suffix)
+        # 行の出どころも同じになる(次の -update も正しくなる)
+        self.assertEqual(self.own('.index/index.tsv'), self.own('.index/full.tsv'))
+
+    def own(self, out):
+        """<out>.own.bin の中身。(正確か, {(TU, ファイル, 行のハッシュ)})。"""
+        with open(os.path.join(self.root, out + '.own.bin'), 'rb') as f:
+            b = f.read()
+        pos = 0
+
+        def take(n):
+            nonlocal pos
+            pos += n
+            return b[pos - n:pos]
+
+        def u32():
+            return struct.unpack('<I', take(4))[0]
+
+        self.assertEqual(take(8), b'LTOWN001')
+        take(8)  # .tu.tsv のハッシュ
+        exact = take(1) == b'\x01'
+        files = [take(u32()).decode('utf-8') for _ in range(u32())]
+        rows = set()
+        for _ in range(u32()):
+            tu = os.path.basename(take(u32()).decode('utf-8'))
+            for _ in range(u32()):
+                f, n = u32(), u32()
+                rows |= {(tu, files[f], h) for h in struct.unpack(f'<{n}Q', take(8 * n))}
+        self.assertEqual(pos, len(b))
+        return exact, rows
+
+    def test_update_shared_header(self):
+        # 変わっていない共有のヘッダーの行のうち、解析し直す TU だけが出していた行(実体化・マクロ由来)を消す
+        h = ('#pragma once\n'
+             'template <class T> struct Box { void Put(T t) { t.Draw(); } };\n'
+             '#ifdef FEATURE\n'
+             'void Feature();\n'
+             '#else\n'
+             'void NoFeature();\n'
+             '#endif\n')
+        self.write('h.h', h)
+        self.write('a.cpp', '#define FEATURE\n#include "h.h"\nstruct A { void Draw(); };\n'
+                   'void UseA(Box<A> b, A a) { b.Put(a); }\n', [])
+        self.write('b.cpp', '#include "h.h"\nstruct B { void Draw(); };\n'
+                   'void UseB(Box<B> b, B x) { b.Put(x); }\n', [])
+        rc, err = self.run_ltidx()
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.has('A::Draw', 'call', 'h.h:2:51'))
+        self.assertTrue(self.has('Feature', 'decl', 'h.h:4:6'))
+
+        # a.cpp だけを変える。h.h の A::Draw の行と Feature の行は、a.cpp だけが出していた
+        self.touch_later('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { a.Draw(); }\n')
+        rc, err = self.run_ltidx('-update')
+        self.assertIn('1/2 TU to re-index', err)
+        self.assertFalse(self.has('A::Draw', 'call', 'h.h:2:51'))
+        self.assertFalse(self.has('Feature', 'decl', 'h.h:4:6'))
+        self.assertTrue(self.has('B::Draw', 'call', 'h.h:2:51'))  # 残す TU(b.cpp)の行は残る
+        self.assertSameAsFull()
+        self.assertTrue(any(f == 'h.h' for _, f, _ in self.own('.index/index.tsv')[1]))  # 共通でない行がある
+
+        # 1 つの TU だけが読んでいたヘッダーを、新しい TU も読むようになった後に、前からの TU だけを変える
+        self.write('g.h', '#pragma once\ntemplate <class T> void Each(T t) { t.Draw(); }\n')
+        self.touch_later('a.cpp', '#include "g.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { Each(a); }\n')
+        rc, err = self.run_ltidx('-update')
+        self.assertEqual(rc, 0, err)
+        os.utime(os.path.join(self.root, 'a.cpp'), (time.time() - 3600,) * 2)  # 次の -update では変わっていない
+        self.write('c.cpp', '#include "g.h"\nstruct C { void Draw(); };\nvoid UseC(C c) { Each(c); }\n', [])
+        rc, err = self.run_ltidx('-update')
+        self.assertIn('1/3 TU to re-index', err)
+        self.assertSameAsFull()
+        self.touch_later('a.cpp', '#include "g.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { a.Draw(); }\n')
+        rc, err = self.run_ltidx('-update')
+        self.assertIn('1/3 TU to re-index', err)
+        self.assertFalse(self.has('A::Draw', 'call', 'g.h:2:39'))
+        self.assertTrue(self.has('C::Draw', 'call', 'g.h:2:39'))
+        self.assertSameAsFull()
+
+    def test_update_without_provenance(self):
+        # 行の出どころ(.own.bin)が無い・別の回のもののときは、前回の行をすべて残し(古い行が残りうる)、そう知らせる
+        self.write('h.h', '#pragma once\ntemplate <class T> void Each(T t) { t.Draw(); }\n')
+        self.write('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { Each(a); }\n', [])
+        self.write('b.cpp', '#include "h.h"\nstruct B { void Draw(); };\nvoid UseB(B b) { Each(b); }\n', [])
+        rc, err = self.run_ltidx()
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.has('A::Draw', 'call', 'h.h:2:39'))
+        own = os.path.join(self.root, '.index', 'index.tsv.own.bin')
+        os.remove(own)
+        self.touch_later('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { a.Draw(); }\n')
+        rc, err = self.run_ltidx('-update')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('index.tsv.own.bin)が無い', err)
+        self.assertTrue(self.has('A::Draw', 'call', 'h.h:2:39'))  # 古い行が残る(前の版と同じ)
+        # 正確でない出どころは、全体を作り直すまで正確でないままにする
+        rc, err = self.run_ltidx('-update')
+        self.assertIn('index.tsv.own.bin)が不正確', err)
+        # 別の回の索引の .own.bin は使わない
+        rc, err = self.run_ltidx(out='.index/full.tsv')
+        self.assertEqual(rc, 0, err)
+        shutil.copyfile(os.path.join(self.root, '.index', 'full.tsv.own.bin'), own)
+        rc, err = self.run_ltidx('-update')
+        self.assertIn('.tu.tsv と組でない', err)
+        # 作り直せば正確になる
+        rc, err = self.run_ltidx()
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(self.has('A::Draw', 'call', 'h.h:2:39'))
+        rc, err = self.run_ltidx('-update')
+        self.assertNotIn('own.bin', err)
 
     def test_replace_while_open(self):
         # 索引のどれかが開かれている間は差し替えを待つ。開いたままなら、新旧を混ぜずに前の索引を残す
@@ -169,7 +281,7 @@ class LtidxTest(unittest.TestCase):
         rc, err = self.run_ltidx()
         self.assertEqual(rc, 0, err)
         d = os.path.join(self.root, '.index')
-        names = ['index.tsv', 'index.tsv.tu.tsv', 'index.tsv.skip.tsv', 'index.tsv.deps.tsv']
+        names = ['index.tsv', 'index.tsv.tu.tsv', 'index.tsv.skip.tsv', 'index.tsv.deps.tsv', 'index.tsv.own.bin']
 
         def snapshot():
             out = {}
