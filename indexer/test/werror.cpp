@@ -1,4 +1,4 @@
-// /WX を付けた TU でも、cl に無い clang の警告で解析失敗にしない(コードベース B で 13 TU が落ちた)
+// /WX を付けた TU でも、cl に無い clang の警告で解析失敗にしない(計測に使ったコードベースで 13 TU が落ちた)
 struct Base {
   virtual void F();
   virtual void G();

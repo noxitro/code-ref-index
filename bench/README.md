@@ -15,7 +15,7 @@
 結果と考察は `../docs/design.md` にあります。問題は 2 つのコードベースで用意しています。
 
 - `tasks.json`: C++ のゲームエンジン [Nox](https://github.com/noxitro/Nox) の 4 問(T1〜T4)。回答の書式は `answer-format.md`
-- `local/tasks-b.json`: C++ ライブラリ 公開されている OSS の C++ ライブラリ の 4 問(E1〜E4)。回答の書式は `local/answer-format-b.md`。索引は CMake + Ninja で `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_EXAMPLES=ON` を付けて作った `compile_commands.json` から作ります
+- コードベース B(公開されている OSS の C++ ライブラリ)の 4 問(E1〜E4)。特定の製品を評価したものと読まれないよう、問題と正解のファイルは公開していません。手元では `local\`(git に入れない)に `tasks-<名前>.json` と回答の書式を置きます
 
 ## 前提
 
@@ -32,8 +32,8 @@ $env:CRI_BENCH_INDEXDIR  = 'D:\work\index'      # 索引の置き場所
 pwsh -File run.ps1 -Cond A -TaskId T3 -Rep 1
 pwsh -File run.ps1 -Cond E -TaskId T3 -Rep 1 -Round v3 -Index nox-v3.tsv
 python -I collect.py .
-# コードベース B の問題は、問題ファイルと書式を指定する
-pwsh -File run.ps1 -Cond G -TaskId E2 -Rep 1 -Round v5 -Index b-v5.tsv -Tasks local/tasks-b.json -Format local/answer-format-b.md
+# 別のコードベースの問題は、問題ファイルと書式を指定する(local\ に置いたもの)
+pwsh -File run.ps1 -Cond G -TaskId E2 -Rep 1 -Round v5 -Index b-v5.tsv -Tasks local\tasks-b.json -Format local\answer-format-b.md
 ```
 
 - `run.ps1` は、条件ごとの `.github\`(と `.index\`)を作業フォルダに置き直してから、1 問を実行します
