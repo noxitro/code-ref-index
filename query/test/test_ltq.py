@@ -309,6 +309,17 @@ class LtqTest(unittest.TestCase):
         # 受け手の無い呼び出しには付けない
         self.assertRegex(out, r'src/mac/m\.mm:4  \| Make\(\);')
 
+    def test_compact_summarizes_low_value_sections(self):
+        # 短い形: 呼び出しは全部出し、コメント内の一致はフォルダごとの件数にする
+        self.index('index', self.COMMON, [self.COMMENT])
+        full = self.ltq('refs', 'Run')
+        out = self.ltq('refs', 'Run', '--compact')
+        self.assertIn('(compact output:', out)
+        self.assertIn('src/a.cpp:3  [in Main]  | Run();', out)
+        self.assertIn('src/a.cpp:7', full)
+        self.assertIn('inside comments -> not code; do not report these: 1\n    src/  1 matches in 1 files', out)
+        self.assertNotIn('src/a.cpp:7', out)
+
     def test_root_is_found_from_a_subfolder(self):
         # --root を省くと、カレントから親へさかのぼって .index のあるフォルダを使う
         self.index('index', self.COMMON, [self.COMMENT])

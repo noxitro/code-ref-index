@@ -84,6 +84,17 @@ class ServerTest(unittest.TestCase):
         self.assertTrue(r['isError'])
         self.assertIn('index not found', r['content'][0]['text'])
 
+    def test_large_result_is_shortened(self):
+        # クライアントの上限(Copilot CLI は 20,480 バイト)を超える結果は、短い形にし、それでも超えれば末尾を切る
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        self.start(['--root', self.root, '--max-output-bytes', '400'])
+        text = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run'}})['result']['content'][0]['text']
+        self.assertLessEqual(len(text.encode('utf-8')), 400)
+        self.assertTrue(text.startswith('index: .index/index.tsv'))  # 先頭(索引の状態)は残す
+        self.assertIn('output cut at 400 bytes', text)  # 短い形の中身は ltq のテストで確かめる
+
     def test_root_is_found_from_a_subfolder(self):
         # --root を省き、ルートより下のフォルダで起動しても、親の .index を引く
         self.proc.stdin.close()

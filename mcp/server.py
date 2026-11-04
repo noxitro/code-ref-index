@@ -20,8 +20,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I ではス�
 import ltq  # noqa: E402
 import autoupdate  # noqa: E402
 
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 PROTOCOL = '2025-06-18'
+# 結果の大きさの上限の既定。Copilot CLI(1.0.105)は 20,480 バイト(COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES)を超える
+# ツールの結果をモデルに渡さず、ファイルに退かせて先頭だけを見せる【実測: 同梱の app.js と、コードベース C での計測】。少し下回らせる
+MAX_BYTES = 18000
 
 INSTRUCTIONS = (
     'C++ reference index built by clang for this workspace. Before grepping C++ sources for callers, '
@@ -75,10 +78,11 @@ TOOLS = [
 
 
 class Config:
-    def __init__(self, root=None, index=None, wait=None):
+    def __init__(self, root=None, index=None, wait=None, max_bytes=MAX_BYTES):
         self.fixed = os.path.abspath(root) if root else None  # None なら、呼ばれるたびに索引のあるフォルダを探す
         self.index = os.path.abspath(index) if index else None
         self.wait = wait  # 自動更新で待つ秒数。None なら自動更新しない
+        self.max_bytes = max_bytes  # 結果の大きさの上限(0 なら切らない)
 
     def resolve(self):
         """(ルート, 注記)。--root が無ければ、カレントフォルダから親へさかのぼって索引のあるフォルダを探す。
@@ -92,7 +96,6 @@ class Config:
 
 
 def run_ltq(cfg, args):
-    out = io.StringIO()
     idx = None
     root, note = cfg.resolve()
     base = ['--root', root] + (['--index', cfg.index] if cfg.index else [])
@@ -102,12 +105,26 @@ def run_ltq(cfg, args):
         if cfg.wait is not None:
             idx, up = autoupdate.refresh(idx, paths, root, cfg.wait)
             note += up
-    with contextlib.redirect_stdout(out):
-        try:
-            code = ltq.main(base + args, idx=idx)  # idx が None なら ltq が探して、無ければ誤りを書く
-        except SystemExit as e:  # argparse の誤り
-            code = e.code or 2
-    return code, note + out.getvalue()
+
+    def run(extra):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            try:
+                code = ltq.main(base + args + extra, idx=idx)  # idx が None なら ltq が探して、無ければ誤りを書く
+            except SystemExit as e:  # argparse の誤り
+                code = e.code or 2
+        return code, note + out.getvalue()
+
+    code, text = run([])
+    # クライアントは大きな結果をモデルに渡さない(Copilot CLI は 20,480 バイトを超えるとファイルに退かせ、先頭だけを見せる)。
+    # 超えたら、報告しない節を件数にまとめた短い形で出し直し、それでも超えたら末尾を切る
+    if cfg.max_bytes and len(text.encode('utf-8')) > cfg.max_bytes and args[0] == 'refs':
+        code, text = run(['--compact'])
+    if cfg.max_bytes and len(text.encode('utf-8')) > cfg.max_bytes:
+        cut = text.encode('utf-8')[:cfg.max_bytes - 300].decode('utf-8', 'ignore')
+        text = cut[:cut.rfind('\n') + 1] + (f'... output cut at {cfg.max_bytes} bytes (the client limit). Ask for a '
+                                            'narrower name, or pass exclude / limit to see the rest.\n')
+    return code, text
 
 
 def call_tool(cfg, name, a):
@@ -168,8 +185,10 @@ def main():
                     help='seconds to wait for an automatic rebuild of a stale index (default 10; 0 = do not wait)')
     ap.add_argument('--no-auto-update', action='store_true', default=os.environ.get('CRI_AUTO_UPDATE') == '0',
                     help='never rebuild the index automatically (or set CRI_AUTO_UPDATE=0)')
+    ap.add_argument('--max-output-bytes', type=int, default=int(os.environ.get('CRI_MAX_OUTPUT_BYTES', MAX_BYTES)),
+                    help=f'shorten results larger than this (default {MAX_BYTES}; 0 = never)')
     a = ap.parse_args()
-    cfg = Config(a.root, a.index, None if a.no_auto_update else max(0.0, a.auto_update_wait))
+    cfg = Config(a.root, a.index, None if a.no_auto_update else max(0.0, a.auto_update_wait), max(0, a.max_output_bytes))
     print(f'code-ref-index mcp {VERSION}: root={cfg.fixed or "auto (cwd upward)"} auto-update={"off" if cfg.wait is None else f"wait {cfg.wait:g} s"}',
           file=sys.stderr)
 

@@ -655,6 +655,9 @@ def cmd_refs(a, idx):
 
     idx.header()
     print(f'query: {a.name}')
+    if a.compact:
+        print('  (compact output: comments, inactive #if, strings, and matches that resolve to other symbols are'
+              ' summarized as counts; calls and likely calls are listed in full)')
     if not syms:
         print('  no symbol in the index matches this name.')
     elif show_sym:
@@ -711,22 +714,31 @@ def cmd_refs(a, idx):
         at.setdefault((r[3], r[4]), []).append(r)
     target_pos = {(r[3], r[4]) for r in target}
     def_files = {r[3] for r in defs}
-    dep_lines, dep_dup = [], 0
+    dep_lines, dep_dup, dep_other = [], 0, {}
     for r in sorted(deps, key=key):
         if (r[3], r[4]) in target_pos:
             dep_dup += 1  # 実体化で対象に解決済み。上の calls に載っている
             continue
         resolved = sorted({x[0] for x in at[(r[3], r[4])] if x[0] != r[0] and not x[1].startswith(DEFS + (OVERRIDE,))})
+        if resolved and a.compact:  # 短い出力では、別の記号に解決された行は件数だけにする
+            for s in resolved:
+                dep_other[s] = dep_other.get(s, 0) + 1
+            continue
         if resolved:
             mark = '  (instantiations resolve it to ' + ', '.join(resolved) + ' -> probably not the query)'
         else:
             mark = '  (never instantiated; unknown target' + (', same file as the definition)' if r[3] in def_files else ')')
         dep_lines.append(fmt(r, False, idx) + mark)
-    print(f'\n== unresolved template calls named "{short}" (dep): {len(dep_lines)}'
+    n_other = sum(dep_other.values())
+    print(f'\n== unresolved template calls named "{short}" (dep): {len(dep_lines) + n_other}'
           + (f' (+{dep_dup} already listed in calls)' if dep_dup else ''))
     if dep_lines:
         print('  clang could not resolve these inside templates. Decide from the source line and the')
         print('  enclosing function whether each one calls the queried symbol; they are not counted above.')
+    if dep_other:
+        top = sorted(dep_other.items(), key=lambda kv: -kv[1])
+        print(f'  {n_other} of them are resolved by instantiations to other symbols -> probably not the query: '
+              + ', '.join(f'{s} ({n})' for s, n in top[:8]) + (' ...' if len(top) > 8 else ''))
     for s in dep_lines[:a.limit]:
         print('  ' + s)
     if len(dep_lines) > a.limit:
@@ -755,28 +767,30 @@ def cmd_refs(a, idx):
     query_syms = {r[0] for r in target} | bases
 
     def resolved_like(src):
-        # 解決先が 1 つに揃うときだけ出す(`Reset();` のような短い行は、クラスごとに別の先へ解決される)
+        """(注記, 見立て)。見立ては 'call'(問い合わせの呼び出しらしい)・'not'(別の記号らしい)・''(手がかり無し)。
+        解決先が 1 つに揃うときだけ出す(`Reset();` のような短い行は、クラスごとに別の先へ解決される)"""
         to = same.get(norm_src(src))
         if to and len(to) == 1:
             s = next(iter(to))
             if s in query_syms:
-                return '  (the same line text elsewhere is a call to the query -> probably a call)'
-            return f'  (the same line text elsewhere resolves to {s} -> probably not the query)'
+                return '  (the same line text elsewhere is a call to the query -> probably a call)', 'call'
+            return f'  (the same line text elsewhere resolves to {s} -> probably not the query)', 'not'
         k = receiver(src, short)
         to = recv.get(k) if k else None
         if to and len(to) == 1:  # 受け手の名前だけで決めるので、弱い手がかりとして出す
             s = next(iter(to))
-            verdict = 'may be a call to the query' if s in query_syms else 'probably not the query'
-            return f'  (`{k}` elsewhere resolves to {s} -> {verdict}; check the receiver type)'
-        return ''
+            if s in query_syms:
+                return f'  (`{k}` elsewhere resolves to {s} -> may be a call to the query; check the receiver type)', 'call'
+            return f'  (`{k}` elsewhere resolves to {s} -> probably not the query; check the receiver type)', 'not'
+        return '', ''
     cats = {k: [] for k in ('comment', 'inactive', 'unparsed', 'string', 'macro', 'other')}
     for path, line, col, src, stale, hint in loose:
         readers = {n for n, s in idx.seen().items() if path in s}
         k, span = classify_ranges(ranges.get(path, []), line, col, readers)
         if k is None:
             k = (hint or 'other') if path in parsed else 'unparsed'
-        like = resolved_like(src) if k in ('unparsed', 'other') else ''
-        cats[k].append((path, f'{path}:{line}{span}{"  [file changed after indexing]" if stale else ""}{like}  | {src}', bool(like)))
+        like, verdict = resolved_like(src) if k in ('unparsed', 'other') else ('', '')
+        cats[k].append((path, f'{path}:{line}{span}{"  [file changed after indexing]" if stale else ""}{like}  | {src}', verdict))
 
     print(f'\n== text matches of "{short}" not in the index: '
           f'{sum(len(v) for v in cats.values())} of {len(hits)} word matches')
@@ -793,8 +807,23 @@ def cmd_refs(a, idx):
         if not items:
             continue
         print(f'  {title}: {len(items)}')
-        if fold and len(items) > 10:  # 手がかりの付いた行はまとめずに出す
-            lines = [s for _, s, h in items if h] + by_dir([(p, s) for p, s, h in items if not h])
+        if a.compact and k in ('comment', 'inactive', 'macro', 'string'):
+            # 短い出力: 報告しない分類は、件数の多いフォルダだけ
+            dirs = sorted(by_dir([(p, s) for p, s, _ in items]), key=lambda x: -int(x.split()[1]))
+            for s in dirs[:5]:
+                print('    ' + s)
+            if len(dirs) > 5:
+                print(f'    ... {len(dirs) - 5} more folders')
+            continue
+        if a.compact:
+            # 短い出力: 問い合わせの呼び出しらしい行だけを出し、別の記号らしい行は件数に、残りはフォルダごとにまとめる
+            nots = sum(1 for _, _, v in items if v == 'not')
+            lines = [s for _, s, v in items if v == 'call']
+            if nots:
+                lines.append(f'{nots} look like calls to other symbols (the same line or receiver resolves elsewhere)')
+            lines += by_dir([(p, s) for p, s, v in items if not v]) if len(items) > 10 else [s for _, s, v in items if not v]
+        elif fold and len(items) > 10:  # 手がかりの付いた行はまとめずに出す
+            lines = [s for _, s, v in items if v] + by_dir([(p, s) for p, s, v in items if not v])
         else:
             lines = [s for _, s, _ in items]
         for s in lines[:a.limit]:
@@ -890,6 +919,9 @@ def main(argv=None, idx=None):
     r.add_argument('name', help='qualified name or its suffix, e.g. nox::io::File::Read or File::Read')
     r.add_argument('--limit', type=int, default=200, help='max lines per section (default 200)')
     r.add_argument('--exclude', action='append', default=[], help='directory name to skip in the text search')
+    r.add_argument('--compact', action='store_true',
+                   help='summarize low-value sections (comments, inactive #if, strings, template calls resolved to '
+                        'other symbols, matches resolved elsewhere) into counts')
     c = sub.add_parser('check', help='how the index treats each path:line[:col]')
     c.add_argument('locs', nargs='+')
     a = ap.parse_args(argv)
