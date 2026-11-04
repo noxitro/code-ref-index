@@ -25,7 +25,7 @@ Copilot が起動するので、手で起動する必要はありません。手
 code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>] [--auto-update-wait 秒 | --no-auto-update]
 ```
 
-- `--root` の既定は、起動されたときのカレントフォルダです。Copilot CLI は作業フォルダで起動します
+- `--root` を省くと、起動されたときのカレントフォルダから親へさかのぼり、`.index` のある最初のフォルダをルートにします(`.git` と同じ探し方)。Copilot CLI は作業フォルダで起動するので、ソースのルートより下で起動しても、ルートの索引を引きます。そのときは出力の先頭に `root: <ルート> (the index is in this parent folder ...)` と出し、パスはルートからの相対で返します。探すのは呼び出しのたびなので、サーバーの起動後に作った索引も拾います
 - `--index` を省くと、`<ルート>\.index` の中の索引本体(構成ごとの `<名前>.tsv`)をすべてまとめて引きます
 - 環境変数 `CRI_ROOT` と `CRI_INDEX` でも指定できます
 - `--auto-update-wait`(既定 10 秒)と `--no-auto-update` は、下の「索引の自動更新」を参照してください。環境変数 `CRI_AUTO_UPDATE_WAIT`・`CRI_AUTO_UPDATE=0` でも指定できます

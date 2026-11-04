@@ -565,6 +565,20 @@ def text_hits(idx, short, excludes):
     return hits
 
 
+def norm_src(s):
+    """ソース行の比べ方: 空白をまとめ、行末のコメントを除く(索引とテキスト検索で切り詰め方が違っても揃う)。"""
+    return ' '.join(s.split('//', 1)[0].split())[:150]
+
+
+def receiver(src, short):
+    """行の中で short を呼んでいる受け手の式(`g->`・`device.`・`Foo::` など)と名前を合わせたもの。
+    受け手の無い呼び出しと、行に short が複数あるものは None(どれのことか決まらない)。"""
+    found = list(re.finditer(r'((?:[A-Za-z_]\w*\s*(?:->|\.|::)\s*)+)' + re.escape(short) + r'\s*[(<]', src))
+    if len(found) != 1 or len(re.findall(r'(?<!\w)' + re.escape(short) + r'(?!\w)', src)) != 1:
+        return None
+    return re.sub(r'\s+', '', found[0].group(1)) + short
+
+
 def by_dir(items):
     """[(path, 行の表示)] をディレクトリごとの件数にまとめる。"""
     agg = {}
@@ -723,13 +737,40 @@ def cmd_refs(a, idx):
     for r in rows:
         if r[0] not in tagged:
             others[r[0]] = others.get(r[0], 0) + 1
+    # 索引に無い一致の手がかり: 同じ文面の行か、同じ受け手の式の呼び出しが索引にあれば、clang がそれを何に解決したか
+    # (別プラットフォーム向けの写しのようなファイルでは、同じ形の呼び出しが同じ先に解決されることが多い)
+    same, recv = {}, {}
+    for r in rows:
+        if r[1].startswith('call') and r[0] != '?::' + short:
+            same.setdefault(norm_src(r[6]), set()).add(r[0])
+            k = receiver(r[6], short)
+            if k:
+                recv.setdefault(k, set()).add(r[0])
+    query_syms = {r[0] for r in target} | bases
+
+    def resolved_like(src):
+        # 解決先が 1 つに揃うときだけ出す(`Reset();` のような短い行は、クラスごとに別の先へ解決される)
+        to = same.get(norm_src(src))
+        if to and len(to) == 1:
+            s = next(iter(to))
+            if s in query_syms:
+                return '  (the same line text elsewhere is a call to the query -> probably a call)'
+            return f'  (the same line text elsewhere resolves to {s} -> probably not the query)'
+        k = receiver(src, short)
+        to = recv.get(k) if k else None
+        if to and len(to) == 1:  # 受け手の名前だけで決めるので、弱い手がかりとして出す
+            s = next(iter(to))
+            verdict = 'may be a call to the query' if s in query_syms else 'probably not the query'
+            return f'  (`{k}` elsewhere resolves to {s} -> {verdict}; check the receiver type)'
+        return ''
     cats = {k: [] for k in ('comment', 'inactive', 'unparsed', 'string', 'macro', 'other')}
     for path, line, col, src, stale, hint in loose:
         readers = {n for n, s in idx.seen().items() if path in s}
         k, span = classify_ranges(ranges.get(path, []), line, col, readers)
         if k is None:
             k = (hint or 'other') if path in parsed else 'unparsed'
-        cats[k].append((path, f'{path}:{line}{span}{"  [file changed after indexing]" if stale else ""}  | {src}'))
+        like = resolved_like(src) if k in ('unparsed', 'other') else ''
+        cats[k].append((path, f'{path}:{line}{span}{"  [file changed after indexing]" if stale else ""}{like}  | {src}', bool(like)))
 
     print(f'\n== text matches of "{short}" not in the index: '
           f'{sum(len(v) for v in cats.values())} of {len(hits)} word matches')
@@ -746,7 +787,10 @@ def cmd_refs(a, idx):
         if not items:
             continue
         print(f'  {title}: {len(items)}')
-        lines = by_dir(items) if fold and len(items) > 10 else [s for _, s in items]
+        if fold and len(items) > 10:  # 手がかりの付いた行はまとめずに出す
+            lines = [s for _, s, h in items if h] + by_dir([(p, s) for p, s, h in items if not h])
+        else:
+            lines = [s for _, s, _ in items]
         for s in lines[:a.limit]:
             print('    ' + s)
         if len(lines) > a.limit:
@@ -814,13 +858,27 @@ def find_indexes(root):
     return [os.path.join(d, f) for f in main]
 
 
+def find_root(start):
+    """start から親へさかのぼって、索引のある最初のフォルダ(.git と同じ探し方)。無ければ None。
+    ソースのルートより下のフォルダでエージェントを起動しても、ルートの索引を引けるようにする。"""
+    d = os.path.abspath(start)
+    while True:
+        if find_indexes(d):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
 def main(argv=None, idx=None):
     """戻り値は終了コード。結果は標準出力に書く(MCP サーバーはこれを取り込んで返す)。
     idx を渡すと、索引を探さずにそれを引く(MCP サーバーが鮮度を確かめるのに作ったものを使い回す)。"""
     ap = argparse.ArgumentParser(prog='ltq', description='C++ reference index query (ltidx TSV)')
     ap.add_argument('--index', action='append',
                     help='index TSV; repeat it for several configurations (default: every index in <root>/.index)')
-    ap.add_argument('--root', default='.', help='source root the index paths are relative to (default .)')
+    ap.add_argument('--root', help='source root the index paths are relative to '
+                                   '(default: the nearest folder with .index, from . upward)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     r = sub.add_parser('refs', help='references, definitions, unresolved template calls, and why text matches are missing')
     r.add_argument('name', help='qualified name or its suffix, e.g. nox::io::File::Read or File::Read')
@@ -829,6 +887,10 @@ def main(argv=None, idx=None):
     c = sub.add_parser('check', help='how the index treats each path:line[:col]')
     c.add_argument('locs', nargs='+')
     a = ap.parse_args(argv)
+    if a.root is None:
+        a.root = (None if a.index else find_root('.')) or '.'
+        if os.path.abspath(a.root) != os.path.abspath('.'):
+            print(f'root: {os.path.abspath(a.root)} (the index is in this parent folder; paths below are relative to it)')
     if idx is None:
         indexes = a.index or find_indexes(a.root)
         missing = [p for p in indexes if not os.path.exists(p)]

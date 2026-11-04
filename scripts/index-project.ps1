@@ -36,6 +36,10 @@ $exe = Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe'
 if (-not (Test-Path $exe)) { throw "ltidx.exe not found. Run indexer\build.bat first." }
 
 New-Item -ItemType Directory "$Root\.index" -Force | Out-Null
+# 索引は git に入れない。プロジェクトの .gitignore は書き換えず、.index の中に「全部を無視する」.gitignore を置く
+if (-not (Test-Path -LiteralPath "$Root\.index\.gitignore")) {
+    [IO.File]::WriteAllText("$Root\.index\.gitignore", "# cxxref の索引(index-project.bat が置いた)。git に入れない`n*`n")
+}
 $out = "$Root\.index\$Name.tsv"
 # MCP サーバーが、ソースの変更を見つけたときに同じやり方で作り直すための記録(mcp\autoupdate.py が読む)。
 # makeCdb は compile_commands.json を作ったときの make-cdb.ps1 の引数。手元のものを使ったときは null(作り直さない)

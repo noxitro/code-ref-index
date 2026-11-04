@@ -29,6 +29,8 @@
 
 ルートに `compile_commands.json` があれば、それを使います。
 
+索引は `<ルート>\.index\` にできます。`.index` の中に「全部を無視する」`.gitignore`(中身は `*`)を置くので、索引は git に入りません。プロジェクトの `.gitignore` は書き換えません。
+
 ### 指定するとき
 
 ```bat
@@ -90,6 +92,8 @@ setup-instructions.bat -Root D:\src\game -Action Remove
 - `compile_commands.json` の中身(include パス・マクロ・構成とプラットフォームの対応・CMake の引数)
 - 壊れたプロジェクトが混ざっていても、ほかのプロジェクトの分ができること
 - 要求したプラットフォームを持たないプロジェクトを読まないこと
-- `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること。残した作り方の記録から、足した TU を含めて作り直せること
-- `setup`(リポジトリ直下の `setup.bat` の中身)に LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
+- `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること。`.index\.gitignore` を置くこと。残した作り方の記録から、足した TU を含めて作り直せること
+- `setup`(リポジトリ直下の `setup.bat` の中身)
+  - LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
+  - 通しで、索引・`.index\.gitignore`・使い方の指示ができること。Copilot CLI への登録は、未登録なら行い、このリポジトリの `server.py` で登録済みなら何もせず、別の場所の `server.py` で登録されていても `-RegisterCopilot` が無ければ登録し直さないこと。Copilot CLI は偽物の `copilot.cmd` に差し替えて確かめるので、本物の設定には触れません(Visual Studio・LLVM・ビルド済みの `ltidx.exe` が要ります)
 - `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)

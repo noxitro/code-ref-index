@@ -28,8 +28,11 @@ class ServerTest(unittest.TestCase):
             f.write('path\tkind\tbegin\tend\nsrc/a.cpp\tcomment\t4:3\t4:9\n')
         with open(base + '.tu.tsv', 'w', encoding='utf-8', newline='\n') as f:
             f.write(f'file\tok\terrors\tsec\trefs\tfirst_error\n{os.path.join(self.root, "src", "a.cpp")}\t1\t0\t0.1\t2\t\n')
-        self.proc = subprocess.Popen([sys.executable, '-I', SERVER, '--root', self.root], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.start(['--root', self.root])
+
+    def start(self, args, cwd=None):
+        self.proc = subprocess.Popen([sys.executable, '-I', SERVER] + args, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=cwd)
         self.next_id = 0
 
     def tearDown(self):
@@ -80,6 +83,20 @@ class ServerTest(unittest.TestCase):
         r = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run'}})['result']
         self.assertTrue(r['isError'])
         self.assertIn('index not found', r['content'][0]['text'])
+
+    def test_root_is_found_from_a_subfolder(self):
+        # --root を省き、ルートより下のフォルダで起動しても、親の .index を引く
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        self.start([], cwd=os.path.join(self.root, 'src'))
+        r = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run'}})['result']
+        self.assertFalse(r['isError'], r['content'][0]['text'])
+        text = r['content'][0]['text']
+        first = text.splitlines()[0]
+        self.assertIn('the index is in this parent folder', first)
+        self.assertEqual(os.path.normcase(first.split(' (')[0][len('root: '):]), os.path.normcase(self.root))
+        self.assertIn('call   src/a.cpp:3  [in Main]', text)  # パスはルートからの相対のまま
 
 
 if __name__ == '__main__':

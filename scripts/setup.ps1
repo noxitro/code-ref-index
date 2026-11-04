@@ -63,13 +63,7 @@ if ($NoIndex -or -not $Root) {
     $Root = (Resolve-Path -LiteralPath $Root.Trim().Trim('"')).Path
     ''
     '== 索引を作ります'
-    & (Join-Path $PSScriptRoot 'index-project.ps1') -Root $Root
-    # プロジェクトの .gitignore は書き換えず、.index の中に「全部を無視する」.gitignore を置く
-    $ignore = Join-Path $Root '.index\.gitignore'
-    if (-not (Test-Path -LiteralPath $ignore)) {
-        [IO.File]::WriteAllText($ignore, "# cxxref の索引(setup.bat が置いた)。git に入れない`n*`n")
-        "git に入れないよう、$ignore を置きました"
-    }
+    & (Join-Path $PSScriptRoot 'index-project.ps1') -Root $Root  # .index\.gitignore も置く(索引を git に入れない)
     ''
     if ($Instructions -or ($interactive -and (Confirm-Step "使い方の指示を $Root\.github\copilot-instructions.md に足しますか"))) {
         & (Join-Path $PSScriptRoot 'setup-instructions.ps1') -Root $Root -Action Add

@@ -75,24 +75,36 @@ TOOLS = [
 
 
 class Config:
-    def __init__(self, root, index=None, wait=None):
-        self.root = os.path.abspath(root)
+    def __init__(self, root=None, index=None, wait=None):
+        self.fixed = os.path.abspath(root) if root else None  # None なら、呼ばれるたびに索引のあるフォルダを探す
         self.index = os.path.abspath(index) if index else None
         self.wait = wait  # 自動更新で待つ秒数。None なら自動更新しない
-        self.base = ['--root', self.root] + (['--index', self.index] if self.index else [])
+
+    def resolve(self):
+        """(ルート, 注記)。--root が無ければ、カレントフォルダから親へさかのぼって索引のあるフォルダを探す。
+        呼ばれるたびに探すので、サーバーの起動後に作った索引も拾う。"""
+        cwd = os.getcwd()
+        root = self.fixed or (None if self.index else ltq.find_root(cwd)) or cwd
+        note = ''
+        if not self.fixed and os.path.normcase(root) != os.path.normcase(cwd):
+            note = f'root: {root} (the index is in this parent folder; paths below are relative to it)\n'
+        return root, note
 
 
 def run_ltq(cfg, args):
     out = io.StringIO()
-    note, idx = '', None
-    paths = [cfg.index] if cfg.index else ltq.find_indexes(cfg.root)
+    idx = None
+    root, note = cfg.resolve()
+    base = ['--root', root] + (['--index', cfg.index] if cfg.index else [])
+    paths = [cfg.index] if cfg.index else ltq.find_indexes(root)
     if paths and all(os.path.exists(p) for p in paths):
-        idx = ltq.Index(paths, cfg.root)
+        idx = ltq.Index(paths, root)
         if cfg.wait is not None:
-            idx, note = autoupdate.refresh(idx, paths, cfg.root, cfg.wait)
+            idx, up = autoupdate.refresh(idx, paths, root, cfg.wait)
+            note += up
     with contextlib.redirect_stdout(out):
         try:
-            code = ltq.main(cfg.base + args, idx=idx)  # idx が None なら ltq が探して、無ければ誤りを書く
+            code = ltq.main(base + args, idx=idx)  # idx が None なら ltq が探して、無ければ誤りを書く
         except SystemExit as e:  # argparse の誤り
             code = e.code or 2
     return code, note + out.getvalue()
@@ -149,7 +161,8 @@ class RpcError(Exception):
 
 def main():
     ap = argparse.ArgumentParser(prog='code-ref-index-mcp')
-    ap.add_argument('--root', default=os.environ.get('CRI_ROOT', '.'), help='source root (default: cwd)')
+    ap.add_argument('--root', default=os.environ.get('CRI_ROOT'),
+                    help='source root (default: the nearest folder with .index, from the cwd upward)')
     ap.add_argument('--index', default=os.environ.get('CRI_INDEX'), help='index TSV (default <root>/.index/...)')
     ap.add_argument('--auto-update-wait', type=float, default=float(os.environ.get('CRI_AUTO_UPDATE_WAIT', 10)),
                     help='seconds to wait for an automatic rebuild of a stale index (default 10; 0 = do not wait)')
@@ -157,7 +170,7 @@ def main():
                     help='never rebuild the index automatically (or set CRI_AUTO_UPDATE=0)')
     a = ap.parse_args()
     cfg = Config(a.root, a.index, None if a.no_auto_update else max(0.0, a.auto_update_wait))
-    print(f'code-ref-index mcp {VERSION}: root={cfg.root} auto-update={"off" if cfg.wait is None else f"wait {cfg.wait:g} s"}',
+    print(f'code-ref-index mcp {VERSION}: root={cfg.fixed or "auto (cwd upward)"} auto-update={"off" if cfg.wait is None else f"wait {cfg.wait:g} s"}',
           file=sys.stderr)
 
     stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')

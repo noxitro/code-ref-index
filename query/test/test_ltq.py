@@ -291,6 +291,39 @@ class LtqTest(unittest.TestCase):
         out = self.ltq('--index', os.path.join(d, 'index.tsv'), '--index', os.path.join(d, 'release.tsv'), 'refs', 'Run')
         self.assertIn('[only in index]', out)
 
+    def test_hint_for_files_not_in_the_index(self):
+        # 索引に無いファイル(別プラットフォーム向けの写し)の一致に、同じ形の行の解決先を添える
+        self.write('src/w.cpp', 'void A(); void F(Dev* g) {\n  g->Make(1);\n  q.Make();\n}\n', self.t0 - 10)
+        os.makedirs(os.path.join(self.root, 'src', 'mac'))
+        self.write('src/mac/m.mm', 'void F(Dev* g) {\n  g->Make(2);\n  q.Make();\n  Make();\n}\n', self.t0 - 10)
+        self.index('index', [('Dev::Make', 'call', 'F', 'src/w.cpp:2:6', 'g->Make(1);'),
+                             ('Base::Make', 'call', 'F', 'src/w.cpp:3:5', 'q.Make();'),
+                             ('Base::Make', 'decl', '', 'src/w.cpp:1:1', 'void Make();')],
+                   [], tus=('src/w.cpp',))
+        out = self.ltq('refs', 'Base::Make')
+        # 同じ文面の行は query に解決されている -> 呼び出し
+        self.assertIn('src/mac/m.mm:3  (the same line text elsewhere is a call to the query -> probably a call)', out)
+        # 文面は違うが、受け手の式 g-> が別の先に解決されている -> 弱い手がかり
+        self.assertIn('src/mac/m.mm:2  (`g->Make` elsewhere resolves to Dev::Make -> probably not the query;'
+                      ' check the receiver type)', out)
+        # 受け手の無い呼び出しには付けない
+        self.assertRegex(out, r'src/mac/m\.mm:4  \| Make\(\);')
+
+    def test_root_is_found_from_a_subfolder(self):
+        # --root を省くと、カレントから親へさかのぼって .index のあるフォルダを使う
+        self.index('index', self.COMMON, [self.COMMENT])
+        cwd = os.getcwd()
+        out = io.StringIO()
+        try:
+            os.chdir(os.path.join(self.root, 'src'))
+            with contextlib.redirect_stdout(out):
+                code = ltq.main(['refs', 'Run'])
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn('the index is in this parent folder', out.getvalue().splitlines()[0])
+        self.assertIn('src/a.cpp:3  [in Main]  | Run();', out.getvalue())
+
 
 if __name__ == '__main__':
     unittest.main()

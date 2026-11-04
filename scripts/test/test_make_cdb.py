@@ -165,6 +165,8 @@ class MakeCdbTest(unittest.TestCase):
         self.write('p.vcxproj', VCXPROJ)
         log = self.ps('index-project.ps1', '-Root', self.root, '-Jobs', '2')
         d = os.path.join(self.root, '.index')
+        with open(os.path.join(d, '.gitignore'), encoding='utf-8') as f:
+            self.assertEqual(f.read().splitlines()[-1], '*')  # 索引を git に入れない
         with open(os.path.join(d, 'index.tsv.tu.tsv'), encoding='utf-8') as f:
             tus = f.read()
         with open(os.path.join(d, 'index.tsv'), encoding='utf-8') as f:
