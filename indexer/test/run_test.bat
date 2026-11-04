@@ -10,6 +10,10 @@ set "D=%D:\=/%"
 set RC=0
 fc /n expected.tsv out\sample.tsv >nul || (echo FAIL: sample.tsv differs & fc /n expected.tsv out\sample.tsv & set RC=1)
 fc /n expected.tsv.skip.tsv out\sample.tsv.skip.tsv >nul || (echo FAIL: sample.tsv.skip.tsv differs & set RC=1)
+rem /WX: clang-only warnings must not fail the TU
+if not exist out\werror mkdir out\werror
+> out\werror\compile_commands.json echo [{"directory":"%D%","file":"%D%werror.cpp","arguments":["cl.exe","/c","/std:c++17","/W4","/WX","werror.cpp"]}]
+..\build\ltidx.exe -p out\werror -root . -o out\werror\werror.tsv 2> out\werror\stderr.txt || (echo FAIL: werror.cpp failed with /WX & type out\werror\stderr.txt & set RC=1)
 if %RC%==0 echo PASS
 pause
 exit /b %RC%

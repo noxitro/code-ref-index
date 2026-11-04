@@ -11,7 +11,9 @@ param(
     [string]$Index = 'nox.tsv',     # 条件 C・E・F・G で使う索引($IndexDir 配下のファイル名)
     [string]$Workspace = $env:CRI_BENCH_WORKSPACE,  # 解析対象のソースのコピー(.github と .index を書き換える)
     [string]$IndexDir = $env:CRI_BENCH_INDEXDIR,    # ltidx で作った索引の置き場所
-    [string]$Clangd = 'clangd'      # 条件 B・D の clangd
+    [string]$Clangd = 'clangd',     # 条件 B・D の clangd
+    [string]$Tasks = 'tasks.json',          # 問題と正解(bench 配下。別のコードベースは tasks-<名前>.json)
+    [string]$Format = 'answer-format.md'    # 回答の書式(bench 配下)
 )
 $ErrorActionPreference = 'Stop'
 $bench = $PSScriptRoot
@@ -76,9 +78,9 @@ switch ($Cond) {
 $oldPath = $env:PATH
 if ($Cond -eq 'E') { $env:PATH = "$ltq;$env:PATH" }
 
-$task = (Get-Content "$bench\tasks.json" -Raw -Encoding utf8 | ConvertFrom-Json) | Where-Object id -eq $TaskId
+$task = (Get-Content "$bench\$Tasks" -Raw -Encoding utf8 | ConvertFrom-Json) | Where-Object id -eq $TaskId
 if (-not $task) { throw "unknown task $TaskId" }
-$prompt = $task.prompt + "`n`n" + (Get-Content "$bench\answer-format.md" -Raw -Encoding utf8)
+$prompt = $task.prompt + "`n`n" + (Get-Content "$bench\$Format" -Raw -Encoding utf8)
 
 $name = if ($Round -eq 'v1') { "$TaskId-$Cond-r$Rep" } else { "$Round-$TaskId-$Cond-r$Rep" }
 New-Item -ItemType Directory "$bench\runs" -Force | Out-Null

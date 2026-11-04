@@ -12,7 +12,10 @@
 - F: `../mcp` の MCP サーバー(指示なし)。作業フォルダの `.mcp.json` に登録します。シェルは渡しません
 - G: F に使い方の指示(`mcp-instructions.md`)を足したもの
 
-結果と考察は `../docs/design.md` にあります。問題は、公開されている C++ のゲームエンジン [Nox](https://github.com/noxitro/Nox) の 4 問です。
+結果と考察は `../docs/design.md` にあります。問題は 2 つのコードベースで用意しています。
+
+- `tasks.json`: C++ のゲームエンジン [Nox](https://github.com/noxitro/Nox) の 4 問(T1〜T4)。回答の書式は `answer-format.md`
+- `local/tasks-b.json`: C++ ライブラリ 公開されている OSS の C++ ライブラリ の 4 問(E1〜E4)。回答の書式は `local/answer-format-b.md`。索引は CMake + Ninja で `-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_EXAMPLES=ON` を付けて作った `compile_commands.json` から作ります
 
 ## 前提
 
@@ -29,17 +32,19 @@ $env:CRI_BENCH_INDEXDIR  = 'D:\work\index'      # 索引の置き場所
 pwsh -File run.ps1 -Cond A -TaskId T3 -Rep 1
 pwsh -File run.ps1 -Cond E -TaskId T3 -Rep 1 -Round v3 -Index nox-v3.tsv
 python -I collect.py .
+# コードベース B の問題は、問題ファイルと書式を指定する
+pwsh -File run.ps1 -Cond G -TaskId E2 -Rep 1 -Round v5 -Index b-v5.tsv -Tasks local/tasks-b.json -Format local/answer-format-b.md
 ```
 
 - `run.ps1` は、条件ごとの `.github\`(と `.index\`)を作業フォルダに置き直してから、1 問を実行します
   - Copilot に渡すのは読み取り専用のツール(`view` `rg` `grep` `glob` `lsp`)だけで、書き込みは渡しません
   - シェルは条件 E だけで渡し、`--allow-tool 'shell(ltq)'` で `ltq` 以外のコマンドは承認しません(非対話モードなので拒否されます)
   - セッションは `runs\index.jsonl` に記録し、やり取りの Markdown は `runs\` に出します(`runs\` はリポジトリに入れません)
-- `-Round` は計測の回です。v1 は最初の計測、v2 は `dep` 行と指示の改善後、v3 は ltq、v4 は MCP です。集計は回ごとに出ます
+- `-Round` は計測の回です。v1 は最初の計測、v2 は `dep` 行と指示の改善後、v3 は ltq、v4 は MCP、v5 は コードベース B での MCP の再計測です。集計は回ごとに出ます
 - `-Index` は、条件 C・E・F・G で使う索引のファイル名です(`-IndexDir` 配下)
 - 条件 F・G の `.mcp.json` は、Copilot CLI が信頼済みのフォルダでしか読みません。`run.ps1` は `--trust-folder` を付けて実行します
 - `collect.py` は `~/.copilot/session-store.db` と、各セッションの `events.jsonl` を読み取り専用で開き、`runs\summary.tsv` と条件ごとの平均を出します。`rep=0` は試運転として集計から外します
-- 問題と正解は `tasks.json`、回答の書式は `answer-format.md` です。指示は、索引用が `index-instructions.md`(v1 の計測で使ったものは `index-instructions-v1.md`)、LSP 用が `lsp-instructions.md`、ltq 用が `cli-instructions.md` です
+- 問題と正解は `tasks.json`(と `tasks-<名前>.json`。`collect.py` はすべて読むので、id はファイルをまたいで重ねません)、回答の書式は `answer-format.md` です。指示は、索引用が `index-instructions.md`(v1 の計測で使ったものは `index-instructions-v1.md`)、LSP 用が `lsp-instructions.md`、ltq 用が `cli-instructions.md` です
 
 ## 注意
 

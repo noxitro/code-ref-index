@@ -7,10 +7,19 @@ import collections, json, os, re, sqlite3, statistics, sys
 
 bench = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(__file__))
 home = os.path.expanduser("~/.copilot")
-tasks = {t["id"]: t for t in json.load(open(os.path.join(bench, "tasks.json"), encoding="utf-8"))}
+# tasks.json(Nox)と tasks-<名前>.json(別のコードベース)。id はファイルをまたいで一意にする
+tasks = {t["id"]: t for fn in sorted(os.listdir(bench)) if re.fullmatch(r"tasks(-[\w-]+)?\.json", fn)
+         for t in json.load(open(os.path.join(bench, fn), encoding="utf-8"))}
 db = sqlite3.connect("file:" + os.path.join(home, "session-store.db") + "?mode=ro", uri=True)
-# 書式違反で runtime/ を落とした回答(T1-D-r1)も中身で採点する
-LOC = re.compile(r"(?<![\w/])((?:runtime/)?(?:bench|core|kernel|modules|reflection|test_support|app)/[\w./-]+?\.(?:h|hpp|cpp|inl)):(\d+)")
+LOC = re.compile(r"(?<![\w/.-])([\w.-]+(?:/[\w.-]+)*\.(?:h|hh|hpp|hxx|c|cc|cpp|cxx|inl|ipp|inc|ixx|cppm|tpp|txx|m|mm)):(\d+)")
+
+
+def normalize(path, truth_paths):
+    # 書式違反で先頭のディレクトリを落とした回答(T1-D-r1 の runtime/)も中身で採点する
+    if path in truth_paths:
+        return path
+    cands = [p for p in truth_paths if p.endswith("/" + path)]
+    return cands[0] if len(cands) == 1 else path
 
 rows = []
 for line in open(os.path.join(bench, "runs", "index.jsonl"), encoding="utf-8-sig"):
@@ -25,8 +34,9 @@ for line in open(os.path.join(bench, "runs", "index.jsonl"), encoding="utf-8-sig
             res = e["data"].get("result")
             result_chars += len(json.dumps(res, ensure_ascii=False)) if res is not None else 0
     answer = [e["data"].get("content", "") for e in ev if e["type"] == "assistant.message"][-1:] or [""]
-    got = {f"{p if p.startswith('runtime/') else 'runtime/' + p}:{n}" for p, n in LOC.findall(answer[0].replace("\\", "/"))}
     truth = set(tasks[r["task"]]["truth"])
+    truth_paths = {t.rsplit(":", 1)[0] for t in truth}
+    got = {f"{normalize(p, truth_paths)}:{n}" for p, n in LOC.findall(answer[0].replace("\\", "/"))}
     u = db.execute(
         "select count(*), sum(input_tokens), sum(cache_read_tokens), sum(output_tokens), sum(total_nano_aiu)/1e9 "
         "from assistant_usage_events where session_id=?", (r["session"],)).fetchone()

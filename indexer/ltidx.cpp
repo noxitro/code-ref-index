@@ -396,6 +396,8 @@ int main(int argc, const char **argv) {
           if (X.size() > 3 && (X[0] == '/' || X[0] == '-') &&
               (X.substr(1).starts_with("Yu") || X.substr(1).starts_with("Yc") || X.substr(1).starts_with("Fp")))
             continue;  // PCH は使わない(大文字小文字を区別して /fp:precise を残す)
+          if (X == "/WX" || X == "-WX" || X == "-Werror" || X.starts_with("-Werror="))
+            continue;  // cl に無い clang の警告(override の付け忘れなど)がエラーになり TU が落ちる
           R.push_back(S);
         }
         return R;
