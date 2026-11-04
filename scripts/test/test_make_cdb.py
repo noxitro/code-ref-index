@@ -129,13 +129,19 @@ class MakeCdbTest(unittest.TestCase):
     def test_index_project_makes_cdb(self):
         # compile_commands.json が無いルートでも、index-project だけで索引ができる
         self.write('p.vcxproj', VCXPROJ)
-        self.ps('index-project.ps1', '-Root', self.root, '-Jobs', '2')
-        with open(os.path.join(self.root, '.index', 'index.tsv'), encoding='utf-8') as f:
-            rows = [line.split('\t') for line in f]
-        self.assertTrue(any(r[0] == 'V' and r[1] == 'call' for r in rows))   # IncludePath のヘッダーも解決できた
-        self.assertTrue(any(r[0] == 'Debug' and r[1] == 'call' for r in rows))
-        with open(os.path.join(self.root, '.index', 'index.tsv.tu.tsv'), encoding='utf-8') as f:
-            self.assertEqual([line.split('\t')[1] for line in list(f)[1:]], ['1', '1'])
+        log = self.ps('index-project.ps1', '-Root', self.root, '-Jobs', '2')
+        d = os.path.join(self.root, '.index')
+        with open(os.path.join(d, 'index.tsv.tu.tsv'), encoding='utf-8') as f:
+            tus = f.read()
+        with open(os.path.join(d, 'index.tsv'), encoding='utf-8') as f:
+            text = f.read()
+        with open(os.path.join(d, 'cdb-Debug-x64', 'compile_commands.json'), encoding='utf-8-sig') as f:
+            cdb = f.read()
+        info = f'\nroot={self.root}\n{log}\n{tus}\n{text[:2000]}\n{cdb[:3000]}'
+        self.assertEqual([line.split('\t')[1] for line in tus.splitlines()[1:]], ['1', '1'], info)
+        rows = [line.split('\t') for line in text.splitlines()]
+        self.assertTrue(any(r[0] == 'V' and r[1] == 'call' for r in rows), info)  # IncludePath のヘッダーも解決できた
+        self.assertTrue(any(r[0] == 'Debug' and r[1] == 'call' for r in rows), info)
 
 
 if __name__ == '__main__':
