@@ -28,7 +28,7 @@ def prepare(ws, index, cdb):
     wait_lock(d)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
-    for s in ('', '.tu.tsv', '.skip.tsv', '.deps.tsv'):
+    for s in ('', '.tu.tsv', '.skip.tsv', '.deps.tsv', '.own.bin'):
         if os.path.exists(index + s):
             shutil.copy2(index + s, os.path.join(d, 'index.tsv' + s))  # 更新日時を保つ(古さの判定に使う)
     rec = {'version': 1, 'root': ws, 'cdb': cdb, 'out': os.path.join(d, 'index.tsv'),

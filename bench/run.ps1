@@ -69,8 +69,8 @@ switch ($Cond) {
         # 段階 3 の MCP。作業フォルダの .mcp.json に登録する(F は指示なし、G・H は指示あり)。シェルは渡さない
         New-Item -ItemType Directory "$ws\.github", "$ws\.index" | Out-Null
         if ($Cond -in 'G', 'H') { Copy-Item "$bench\mcp-instructions.md" "$ws\.github\copilot-instructions.md" }
-        # 自動更新には .deps.tsv と作り方の記録(.recipe.json)が要る。記録はこの作業フォルダ向けに作る
-        foreach ($s in '', '.tu.tsv', '.skip.tsv', '.deps.tsv') {
+        # 自動更新には .deps.tsv・.own.bin と作り方の記録(.recipe.json)が要る。記録はこの作業フォルダ向けに作る
+        foreach ($s in '', '.tu.tsv', '.skip.tsv', '.deps.tsv', '.own.bin') {
             if (Test-Path "$IndexDir\$Index$s") { Copy-Item "$IndexDir\$Index$s" "$ws\.index\index.tsv$s" }
         }
         $cdbDir = if ($Cdb) { $Cdb } else { "$ws\.cdb" }
