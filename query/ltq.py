@@ -814,8 +814,9 @@ def find_indexes(root):
     return [os.path.join(d, f) for f in main]
 
 
-def main(argv=None):
-    """戻り値は終了コード。結果は標準出力に書く(MCP サーバーはこれを取り込んで返す)。"""
+def main(argv=None, idx=None):
+    """戻り値は終了コード。結果は標準出力に書く(MCP サーバーはこれを取り込んで返す)。
+    idx を渡すと、索引を探さずにそれを引く(MCP サーバーが鮮度を確かめるのに作ったものを使い回す)。"""
     ap = argparse.ArgumentParser(prog='ltq', description='C++ reference index query (ltidx TSV)')
     ap.add_argument('--index', action='append',
                     help='index TSV; repeat it for several configurations (default: every index in <root>/.index)')
@@ -828,13 +829,14 @@ def main(argv=None):
     c = sub.add_parser('check', help='how the index treats each path:line[:col]')
     c.add_argument('locs', nargs='+')
     a = ap.parse_args(argv)
-    indexes = a.index or find_indexes(a.root)
-    missing = [p for p in indexes if not os.path.exists(p)]
-    if not indexes or missing:
-        where = missing[0] if missing else os.path.join(a.root, '.index', 'index.tsv')
-        print(f'index not found: {os.path.abspath(where)}  (build it with ltidx, or pass --index)')
-        return 2
-    idx = Index(indexes, a.root)
+    if idx is None:
+        indexes = a.index or find_indexes(a.root)
+        missing = [p for p in indexes if not os.path.exists(p)]
+        if not indexes or missing:
+            where = missing[0] if missing else os.path.join(a.root, '.index', 'index.tsv')
+            print(f'index not found: {os.path.abspath(where)}  (build it with ltidx, or pass --index)')
+            return 2
+        idx = Index(indexes, a.root)
     (cmd_refs if a.cmd == 'refs' else cmd_check)(a, idx)
     return 0
 

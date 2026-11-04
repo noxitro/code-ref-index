@@ -22,12 +22,34 @@ CLI 方式(`ltq`)と違って Copilot にシェルを渡す必要が無く、ツ
 Copilot が起動するので、手で起動する必要はありません。手で動かすときは次のとおりです(標準入出力で JSON-RPC を話します)。
 
 ```bat
-code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>]
+code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>] [--auto-update-wait 秒 | --no-auto-update]
 ```
 
 - `--root` の既定は、起動されたときのカレントフォルダです。Copilot CLI は作業フォルダで起動します
 - `--index` を省くと、`<ルート>\.index` の中の索引本体(構成ごとの `<名前>.tsv`)をすべてまとめて引きます
 - 環境変数 `CRI_ROOT` と `CRI_INDEX` でも指定できます
+- `--auto-update-wait`(既定 10 秒)と `--no-auto-update` は、下の「索引の自動更新」を参照してください。環境変数 `CRI_AUTO_UPDATE_WAIT`・`CRI_AUTO_UPDATE=0` でも指定できます
+
+## 索引の自動更新
+
+コードを変えた後に `index-project.bat -Update` を手で実行する必要はありません。`refs` か `check` が呼ばれるたびに、索引の後に変わったソースがあるかを確かめ、あれば次のように作り直します(`autoupdate.py`)。
+
+1. 裏で作り直しを始めます。ふだんは変わったファイルを読む TU だけを `ltidx -update` で解析し直します。新しいソースや消えた TU があるときは、`compile_commands.json` もソリューションや CMake から作り直します。最低優先度で、同時に 1 つだけ走ります
+2. 最大 10 秒、終わるのを待ちます。終われば新しい索引で答え、出力の先頭に `auto-update: rebuilt the index ...` と出します
+3. 終わらなければ、今の索引(変わったファイルの行は付け直したもの)で答え、`auto-update: rebuilding the index in the background ...` と出します。次の呼び出しから新しい索引を使います
+
+実測では、ふつうの .cpp を変えたときは 0.5 秒、clang のヘッダーを読む重い .cpp を変えたときは 3.9 秒で、作り直してから答えました。多くの TU が読むヘッダーを変えると全体の作り直しに近い時間(Nox で 90〜120 秒)がかかるので、そのときは裏で続けます。
+
+- **前提**: 索引を `..\scripts\index-project.bat` で作ったこと。作り方を `<索引>.tsv.recipe.json` に残し、それを使って作り直します。この機能より前に作った索引では、一度だけ `index-project.bat` を実行し直してください(それまでは `auto-update: off for this index` と出ます)
+- **失敗したとき**: `auto-update: rebuild failed` と出し、今の索引で答えます。ログは `.index\update.log` にあります。次にソースが変わるまでは、同じ作り直しを繰り返しません
+- **止めるとき**: 裏で CPU を使われたくない大きなコードベースでは、登録に `--no-auto-update` を足します。待たずにすぐ答えさせるなら `--auto-update-wait 0` です
+
+  ```bat
+  copilot mcp add code-ref-index -- python -I <このリポジトリ>\mcp\server.py --no-auto-update
+  ```
+
+- **判定**: ファイルの更新日時が索引より新しいかで決めます。`.vcxproj` のコンパイルの設定だけを変えた(ソースは変えていない)ときは気づかないので、`index-project.bat -Update` を手で実行します
+- **待つ時間の上限**: Copilot CLI はサーバーごとにツール呼び出しの待ち時間を設定できます(`copilot mcp add --timeout <ms>`)。既定値は公式の文書で見つけられませんでした。既定の 10 秒は、他の Copilot クライアントで報告されている上限(Eclipse 版の 60 秒)より十分短くしてあります【既報】
 
 ## Copilot CLI で使う
 
@@ -82,7 +104,10 @@ Copilot CLI は、許可リストに無い MCP サーバーの初期化時の説
 
 `test\run_test.bat` をダブルクリックします。`server.py` を子プロセスで起動し、合成した小さな索引に対して `initialize`・`tools/list`・`tools/call`(`refs`・`check`)と誤った要求を JSON-RPC で送り、返事を確かめます。Copilot は要りません。
 
+`ltidx.exe` をビルド済みなら、自動更新も確かめます(`test_autoupdate.py`)。小さなプロジェクトを索引にしてからソースを変え、次の呼び出しで作り直されること、TU を足すと拾うこと、待たない設定でも次の呼び出しで新しい索引を使うこと、記録の無い索引には触らないこと、失敗を繰り返さないことです。
+
 ## 制約
 
 - 1 回の呼び出しごとに索引を読み直します(Nox の 41 MB で 0.2〜0.3 秒)。常駐中に索引を作り直しても、次の呼び出しから新しい索引を使います
+- 自動更新は `.index` の中に `update.lock`(作り直し中だけ)・`update.json`(前回の結果)・`update.log` を置きます
 - MCP の stdio トランスポートの、ツールに要る範囲(`initialize`・`tools/list`・`tools/call`・`ping`)だけを実装しています

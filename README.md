@@ -49,7 +49,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 
 2. **ltidx をビルドする**: `indexer\build.bat` をダブルクリックします。LLVM の場所は、環境変数 `LLVM_ROOT` か、`indexer\llvm-root.txt`(1 行目に展開先のフォルダを書く。git には入りません)で指定します
 3. **索引を作る**: `scripts\index-project.bat` をダブルクリックし、ソースのルート(`.sln`・`.slnx`・`CMakeLists.txt` のあるフォルダ)を入れます。`compile_commands.json` は、ソリューションか CMake から自動で作ります(ビルドはしません)。`<ルート>\.index\` に索引ができるので、プロジェクトの `.gitignore` に `.index/` を足してください(`setup.bat` で作ったときは要りません)
-   - コードを変えた後は `-Update` を付けると、変わった TU だけを作り直します
+   - コードを変えた後は、MCP サーバーが呼ばれたときに、変わった TU だけを自動で作り直します([mcp/README.md](mcp/README.md) の「索引の自動更新」)。手で作り直すときは `-Update` を付けます
    - Debug/Release など構成を足すときは `-Configuration Release -Name release` のように名前を変えて作ると、まとめて引けます
    - 細かい指定(ソリューションが複数ある、CMake のオプションを渡す、手元の `compile_commands.json` を使う)は [scripts/README.md](scripts/README.md) を参照してください
 4. **Copilot に登録する**: Copilot CLI なら `scripts\register-copilot.bat` をダブルクリックします(中身は次の 1 行です)。以後、どのプロジェクトでも作業フォルダの `.index` を自動で使います

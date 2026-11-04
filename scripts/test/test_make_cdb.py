@@ -179,6 +179,21 @@ class MakeCdbTest(unittest.TestCase):
         # 「VC++ ディレクトリ」のヘッダーの中の定義も索引にある
         self.assertTrue(any(r[0] == 'V' and r[1] == 'def' and r[3].startswith('vcdir/v.h:') for r in rows), info)
 
+        # 作り方の記録から、MCP サーバーの自動更新が作り直せる。新しい TU を足すと compile_commands.json から作り直す
+        with open(os.path.join(d, 'index.tsv.recipe.json'), encoding='utf-8') as f:
+            recipe = json.load(f)
+        self.assertEqual(recipe['makeCdb']['Out'], os.path.join(d, 'cdb-Debug-x64'))
+        self.write('c.cpp', '#include "h.h"\nint H() { return F(); }\n')
+        self.write('p.vcxproj', VCXPROJ.replace('<ClCompile Include="b.cpp" />',
+                                                '<ClCompile Include="b.cpp" /><ClCompile Include="c.cpp" />'))
+        r = subprocess.run([sys.executable, '-I', os.path.join(SCRIPTS, '..', 'mcp', 'autoupdate.py'), '--dir', d, '--full'],
+                           capture_output=True, text=True)
+        with open(os.path.join(d, 'update.log'), encoding='utf-8', errors='replace') as f:
+            ulog = f.read()
+        self.assertEqual(r.returncode, 0, ulog)
+        with open(os.path.join(d, 'index.tsv.tu.tsv'), encoding='utf-8') as f:
+            self.assertIn('c.cpp', f.read(), ulog)
+
 
 if __name__ == '__main__':
     unittest.main()

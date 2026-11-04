@@ -52,6 +52,8 @@ index-project.bat -Root D:\src\game -Cdb D:\build\game
 
 `compile_commands.json` は毎回作り直します(Visual Studio のソリューションなら数秒)。増えた・消えたソースも拾えます。作ったものは `<ルート>\.index\cdb-<構成>-<プラットフォーム>\` に置きます。
 
+作り方(`compile_commands.json` の場所・作り方の引数・並列数)を `<ルート>\.index\<名前>.tsv.recipe.json` に残します。MCP サーバーはこれを使って、ソースが変わると索引を自動で作り直します(`../mcp/README.md` の「索引の自動更新」)。
+
 `make-cdb.bat` だけを使うこともできます(引数は `-Root`・`-Project`・`-Configuration`・`-Platform`・`-CMakeArgs`・`-Out`)。
 
 ### 使い方の指示を足す・消す(`setup-instructions.bat`)
@@ -88,6 +90,6 @@ setup-instructions.bat -Root D:\src\game -Action Remove
 - `compile_commands.json` の中身(include パス・マクロ・構成とプラットフォームの対応・CMake の引数)
 - 壊れたプロジェクトが混ざっていても、ほかのプロジェクトの分ができること
 - 要求したプラットフォームを持たないプロジェクトを読まないこと
-- `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること
+- `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること。残した作り方の記録から、足した TU を含めて作り直せること
 - `setup`(リポジトリ直下の `setup.bat` の中身)に LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
 - `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)

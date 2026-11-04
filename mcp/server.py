@@ -1,6 +1,9 @@
 """cxxref の MCP サーバー(stdio)。ltq の refs / check をツールとして公開する。
 
-  python -I server.py [--root <ソースのルート>] [--index <索引.tsv>]
+  python -I server.py [--root <ソースのルート>] [--index <索引.tsv>] [--auto-update-wait 秒 | --no-auto-update]
+
+索引の後にソースが変わっていたら、裏で作り直して最大 --auto-update-wait 秒(既定 10)待つ(autoupdate.py)。
+終わらなければ今の索引で答え、次の呼び出しから新しい索引を使う。
 
 標準ライブラリだけで、MCP の stdio トランスポート(1 行 1 メッセージの JSON-RPC 2.0)を話す。
 標準出力はプロトコル専用なので、ログは標準エラーに出す。
@@ -13,9 +16,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'query'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I ではスクリプトのフォルダが入らない
 import ltq  # noqa: E402
+import autoupdate  # noqa: E402
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 PROTOCOL = '2025-06-18'
 
 INSTRUCTIONS = (
@@ -69,17 +74,31 @@ TOOLS = [
 ]
 
 
-def run_ltq(base, args):
+class Config:
+    def __init__(self, root, index=None, wait=None):
+        self.root = os.path.abspath(root)
+        self.index = os.path.abspath(index) if index else None
+        self.wait = wait  # 自動更新で待つ秒数。None なら自動更新しない
+        self.base = ['--root', self.root] + (['--index', self.index] if self.index else [])
+
+
+def run_ltq(cfg, args):
     out = io.StringIO()
+    note, idx = '', None
+    paths = [cfg.index] if cfg.index else ltq.find_indexes(cfg.root)
+    if paths and all(os.path.exists(p) for p in paths):
+        idx = ltq.Index(paths, cfg.root)
+        if cfg.wait is not None:
+            idx, note = autoupdate.refresh(idx, paths, cfg.root, cfg.wait)
     with contextlib.redirect_stdout(out):
         try:
-            code = ltq.main(base + args)
+            code = ltq.main(cfg.base + args, idx=idx)  # idx が None なら ltq が探して、無ければ誤りを書く
         except SystemExit as e:  # argparse の誤り
             code = e.code or 2
-    return code, out.getvalue()
+    return code, note + out.getvalue()
 
 
-def call_tool(base, name, a):
+def call_tool(cfg, name, a):
     if name == 'refs':
         args = ['refs', str(a['name'])]
         if a.get('limit'):
@@ -95,10 +114,10 @@ def call_tool(base, name, a):
         args = ['check'] + [str(x) for x in locs]
     else:
         raise KeyError(name)
-    return run_ltq(base, args)
+    return run_ltq(cfg, args)
 
 
-def handle(msg, base):
+def handle(msg, cfg):
     method, mid = msg.get('method'), msg.get('id')
     if method == 'initialize':
         ver = (msg.get('params') or {}).get('protocolVersion') or PROTOCOL
@@ -111,7 +130,7 @@ def handle(msg, base):
     if method == 'tools/call':
         p = msg.get('params') or {}
         try:
-            code, text = call_tool(base, p.get('name'), p.get('arguments') or {})
+            code, text = call_tool(cfg, p.get('name'), p.get('arguments') or {})
         except KeyError:
             raise RpcError(-32602, f'unknown tool: {p.get("name")}')
         except Exception as e:  # 索引の読み込み失敗など。ツールの誤りとして返す
@@ -132,9 +151,14 @@ def main():
     ap = argparse.ArgumentParser(prog='code-ref-index-mcp')
     ap.add_argument('--root', default=os.environ.get('CRI_ROOT', '.'), help='source root (default: cwd)')
     ap.add_argument('--index', default=os.environ.get('CRI_INDEX'), help='index TSV (default <root>/.index/...)')
+    ap.add_argument('--auto-update-wait', type=float, default=float(os.environ.get('CRI_AUTO_UPDATE_WAIT', 10)),
+                    help='seconds to wait for an automatic rebuild of a stale index (default 10; 0 = do not wait)')
+    ap.add_argument('--no-auto-update', action='store_true', default=os.environ.get('CRI_AUTO_UPDATE') == '0',
+                    help='never rebuild the index automatically (or set CRI_AUTO_UPDATE=0)')
     a = ap.parse_args()
-    base = ['--root', os.path.abspath(a.root)] + (['--index', os.path.abspath(a.index)] if a.index else [])
-    print(f'code-ref-index mcp {VERSION}: root={os.path.abspath(a.root)}', file=sys.stderr)
+    cfg = Config(a.root, a.index, None if a.no_auto_update else max(0.0, a.auto_update_wait))
+    print(f'code-ref-index mcp {VERSION}: root={cfg.root} auto-update={"off" if cfg.wait is None else f"wait {cfg.wait:g} s"}',
+          file=sys.stderr)
 
     stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
     stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', newline='\n')
@@ -150,7 +174,7 @@ def main():
             if 'method' not in msg:
                 continue  # 応答(このサーバーは要求を出さない)
             try:
-                result = handle(msg, base)
+                result = handle(msg, cfg)
                 if result is None:
                     continue
                 reply = {'jsonrpc': '2.0', 'id': msg.get('id'), 'result': result}

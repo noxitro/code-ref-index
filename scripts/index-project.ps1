@@ -3,6 +3,7 @@
 # compile_commands.json を -Cdb で渡さず、ルートにも無ければ、make-cdb.ps1 で作る(.slnx / .sln / .vcxproj / CMakeLists.txt から)。
 # 構成(Debug/Release、プラットフォームなど)ごとに -Name を変えて作ると、ltq と MCP サーバーはすべてをまとめて引く。
 # -Update を付けると、前回の後に変わったファイルを読む TU・新しい TU・コマンドの変わった TU だけを解析し直す。
+# 作り方を <Name>.tsv.recipe.json に残す。MCP サーバーはそれを使って、ソースが変わると自動で作り直す。
 [CmdletBinding()]  # 知らない引数をエラーにする(黙って捨てない)
 param(
     [string]$Root,                  # ソースのルート(索引のパスの起点。MCP サーバーもここで動かす)
@@ -20,12 +21,14 @@ if (-not $Root) { $Root = Read-Host 'ソースのルート' }
 if ($Name -notmatch '^[A-Za-z0-9_-]+$') { throw "-Name は英数字・_・- のみ: $Name" }
 $Root = (Resolve-Path $Root).Path
 if (-not $Cdb -and -not $Project -and (Test-Path "$Root\compile_commands.json")) { $Cdb = $Root }
+$mk = $null
 if (-not $Cdb) {
     # 毎回作り直す(数秒で済み、増えた・消えたソースも拾える)
     $Cdb = "$Root\.index\cdb-$Configuration-$Platform"
     $mk = @{ Root = $Root; Configuration = $Configuration; Platform = $Platform; Out = $Cdb; CMakeArgs = $CMakeArgs }
     if ($Project) { $mk.Project = $Project }
     & (Join-Path $PSScriptRoot 'make-cdb.ps1') @mk
+    $mk.Out = (Resolve-Path $Cdb).Path
 }
 $Cdb = (Resolve-Path $Cdb).Path
 if (-not (Test-Path "$Cdb\compile_commands.json")) { throw "compile_commands.json not found in $Cdb" }
@@ -34,6 +37,10 @@ if (-not (Test-Path $exe)) { throw "ltidx.exe not found. Run indexer\build.bat f
 
 New-Item -ItemType Directory "$Root\.index" -Force | Out-Null
 $out = "$Root\.index\$Name.tsv"
+# MCP サーバーが、ソースの変更を見つけたときに同じやり方で作り直すための記録(mcp\autoupdate.py が読む)。
+# makeCdb は compile_commands.json を作ったときの make-cdb.ps1 の引数。手元のものを使ったときは null(作り直さない)
+$recipe = [ordered]@{ version = 1; root = $Root; cdb = $Cdb; out = $out; jobs = $Jobs; makeCdb = $mk }
+$recipe | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath "$out.recipe.json" -Encoding utf8NoBOM
 $t0 = Get-Date
 $ltidxArgs = @('-p', "`"$Cdb`"", '-root', "`"$Root`"", '-o', "`"$out`"", '-j', $Jobs)
 if ($Update) {
