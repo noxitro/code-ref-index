@@ -1,0 +1,63 @@
+# ltq・MCP サーバーのテスト(Windows と Linux)と、ltidx のビルドとテスト(Windows、LLVM の公式配布物を使う)
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: ltq / MCP (${{ matrix.os }}, Python ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: '3.10' }
+          - { os: windows-latest, python: '3.13' }
+          - { os: ubuntu-latest, python: '3.13' }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: ltq
+        run: python -I -W error::ResourceWarning -m unittest discover -s query/test -v
+      - name: MCP server
+        run: python -I -W error::ResourceWarning -m unittest discover -s mcp/test -v
+
+  indexer:
+    name: ltidx (Windows)
+    runs-on: windows-latest
+    env:
+      LLVM_VERSION: 23.1.4
+      LLVM_ROOT: C:\llvm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      # ビルドに要るのは include と lib だけ(bin は 3 GB を超える)。LLVM の CMake 設定は bin の実行ファイルの
+      # 存在を確かめるので、bin に載る名前だけ空のファイルを置く
+      - name: Get LLVM
+        shell: bash
+        run: |
+          name=clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc
+          curl -fsSL -o llvm.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.xz"
+          mkdir -p /c/llvm
+          tar -xf llvm.tar.xz -C /c/llvm --strip-components=1 "$name/include" "$name/lib"
+          rm llvm.tar.xz
+          grep -ho '_IMPORT_PREFIX}/bin/[^"]*' /c/llvm/lib/cmake/*/*.cmake | sed 's|_IMPORT_PREFIX}/||' | sort -u |
+            while read -r f; do mkdir -p "/c/llvm/$(dirname "$f")"; touch "/c/llvm/$f"; done
+          ls /c/llvm/lib/clang
+      - name: Build ltidx
+        shell: cmd
+        run: indexer\build.bat
+      - name: Test ltidx
+        shell: cmd
+        run: indexer\test\run_test.bat
