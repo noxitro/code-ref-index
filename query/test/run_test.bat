@@ -4,5 +4,5 @@ setlocal
 cd /d "%~dp0"
 python -I -W error::ResourceWarning -m unittest discover -s . -v
 set RC=%ERRORLEVEL%
-pause
+if not defined CI pause
 exit /b %RC%

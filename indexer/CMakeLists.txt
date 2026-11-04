@@ -11,7 +11,7 @@ find_package(Clang REQUIRED CONFIG)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)  # 配布物の LLVM に合わせる
 
-add_executable(ltidx ltidx.cpp zstub.c)
+add_executable(ltidx ltidx.cpp codepage.cpp zstub.c)
 target_include_directories(ltidx PRIVATE ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 target_compile_definitions(ltidx PRIVATE ${LLVM_DEFINITIONS}
   LTIDX_RESOURCE_DIR="${LLVM_LIBRARY_DIR}/clang/${LLVM_VERSION_MAJOR}")

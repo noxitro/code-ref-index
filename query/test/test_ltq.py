@@ -44,7 +44,8 @@ class LtqTest(unittest.TestCase):
         if mtime is not None:
             os.utime(fp, (mtime, mtime))
 
-    def index(self, name, rows, skips, tus=('src/a.cpp',), mtime=None):
+    def index(self, name, rows, skips, tus=('src/a.cpp',), mtime=None, deps=None, cp=None):
+        """deps は {TU: [読んだファイル]}(.deps.tsv)、cp は TU ごとに記録するコードページ。省くと古い形式の索引になる。"""
         base = os.path.join(self.root, '.index', name + '.tsv')
         with open(base, 'w', encoding='utf-8', newline='\n') as f:
             for sym, role, caller, loc, src in rows:
@@ -54,11 +55,20 @@ class LtqTest(unittest.TestCase):
             for path, kind, b, e in skips:
                 f.write(f'{path}\t{kind}\t{b}\t{e}\n')
         with open(base + '.tu.tsv', 'w', encoding='utf-8', newline='\n') as f:
-            f.write('file\tok\terrors\tsec\trefs\tfirst_error\n')
+            f.write('file\tok\terrors\tsec\trefs\tfirst_error' + ('\tcommand_hash\tsource_cp\n' if cp else '\n'))
             for t in tus:
-                f.write(f'{os.path.join(self.root, t)}\t1\t0\t0.1\t1\t\n')
+                c = cp.get(t) if isinstance(cp, dict) else cp  # cp は全 TU 共通か {TU: コードページ}
+                f.write(f'{os.path.join(self.root, t)}\t1\t0\t0.1\t1\t' + (f'\t0\t{c}\n' if cp else '\n'))
+        files = [base, base + '.skip.tsv', base + '.tu.tsv']
+        if deps is not None:
+            with open(base + '.deps.tsv', 'w', encoding='utf-8', newline='\n') as f:
+                f.write('tu\tfile\n')
+                for t, ds in deps.items():
+                    for d in ds:
+                        f.write(f'{os.path.join(self.root, t)}\t{d}\n')
+            files.append(base + '.deps.tsv')
         t = self.t0 if mtime is None else mtime
-        for p in (base, base + '.skip.tsv', base + '.tu.tsv'):
+        for p in files:
             os.utime(p, (t, t))
 
     def ltq(self, *args):
@@ -180,6 +190,83 @@ class LtqTest(unittest.TestCase):
         self.assertIn('src/c.cpp', out)
         self.assertIn('1 indexed TU files no longer exist: src/b.cpp', out)
         self.assertIn('src/b.cpp:1  [file deleted after indexing]', out)
+
+    def test_virtual_dispatch(self):
+        # Derived::Draw は Base::Draw を上書きし、Leaf::Draw は Derived::Draw を上書きする
+        src = ('struct Base { virtual void Draw(); };\n'
+               'struct Derived : Base { void Draw() override; };\n'
+               'struct Leaf : Derived { void Draw() override; };\n'
+               'void Call(Base* b, Derived* d, Leaf* l) { b->Draw(); d->Draw(); l->Draw(); }\n')
+        self.write('src/v.cpp', src, self.t0 - 10)
+        self.index('index', [
+            ('Base::Draw', 'decl', '', 'src/v.cpp:1:28', 'struct Base { virtual void Draw(); };'),
+            ('Derived::Draw', 'decl', '', 'src/v.cpp:2:30', 'struct Derived : Base { void Draw() override; };'),
+            ('Derived::Draw', 'override', 'Base::Draw', 'src/v.cpp:2:30', 'struct Derived : Base { void Draw() override; };'),
+            ('Leaf::Draw', 'decl', '', 'src/v.cpp:3:29', 'struct Leaf : Derived { void Draw() override; };'),
+            ('Leaf::Draw', 'override', 'Derived::Draw', 'src/v.cpp:3:29', 'struct Leaf : Derived { void Draw() override; };'),
+            ('Base::Draw', 'call', 'Call', 'src/v.cpp:4:46', src.splitlines()[3]),
+            ('Derived::Draw', 'call', 'Call', 'src/v.cpp:4:57', src.splitlines()[3]),
+            ('Leaf::Draw', 'call', 'Call', 'src/v.cpp:4:68', src.splitlines()[3]),
+        ], [], tus=('src/v.cpp',))
+        out = self.ltq('refs', 'Leaf::Draw')
+        self.assertIn('== calls (resolved by clang): 1\n', out)
+        self.assertIn('the query overrides Base::Draw, Derived::Draw.', out)
+        self.assertIn(': 2\n    call   src/v.cpp:4  Base::Draw  [in Call]', out)
+        self.assertNotIn('overridden by', out)
+        self.assertNotIn('other symbols named', out)  # 上書きの関係にある記号は virtual dispatch の節に出す
+        out = self.ltq('refs', 'Base::Draw')
+        self.assertIn('== calls (resolved by clang): 1\n', out)
+        self.assertNotIn('the query overrides', out)
+        self.assertIn('calls resolved to these, 2, call the override', out)
+        self.assertIn('    Derived::Draw  src/v.cpp:2\n    Leaf::Draw  src/v.cpp:3\n', out)
+        self.assertNotIn('override ', out.split('== virtual dispatch')[0])  # override 行は他の節に混ぜない
+        out = self.ltq('check', 'src/v.cpp:2')
+        self.assertIn('indexed: override Derived::Draw at col 30  [overrides Base::Draw]', out)
+
+    def test_shift_jis_source(self):
+        # ltidx は UTF-8 でないソースを記録したコードページ(932)で UTF-8 に直して解析する。列番号は直した後のバイト位置
+        src = 'void Run();\nvoid Main() {\n  // 表\n  Run();\n  const char* s = "表"; Run();\n  /* 表表 */ Run();\n}\n'
+        fp = os.path.join(self.root, 'src', 's.cpp')
+        with open(fp, 'wb') as f:
+            f.write(src.encode('cp932'))
+        os.utime(fp, (self.t0 - 10, self.t0 - 10))
+        self.write('src/u1.cpp', '\n', self.t0 - 10)
+        self.write('src/u2.cpp', '\n', self.t0 - 10)
+        # /utf-8 の TU(65001)が多くても、Shift_JIS で読んだ TU があればそのコードページで直す
+        self.index('index', [('Run', 'decl', '', 'src/s.cpp:1:6', 'void Run();'),
+                             ('Run', 'call', 'Main', 'src/s.cpp:4:3', 'Run();')],
+                   [('src/s.cpp', 'comment', '3:3', '3:9'), ('src/s.cpp', 'comment', '6:3', '6:15')],
+                   tus=('src/s.cpp', 'src/u1.cpp', 'src/u2.cpp'),
+                   cp={'src/s.cpp': 932, 'src/u1.cpp': 65001, 'src/u2.cpp': 65001},
+                   deps={'src/s.cpp': ['src/s.cpp']})
+        out = self.ltq('refs', 'Run')
+        self.assertNotIn('configurations', out)  # .deps.tsv を構成として拾わない
+        # 5・6 行目は索引から外してあるので「その他」に出る。6 行目の Run は UTF-8 の列で 16 なのでコメント(3〜15)の外。
+        # Shift_JIS のバイト位置(14)で比べると、コメントの中と誤る
+        self.assertIn('other -> not explained by the index; read them if they matter: 2\n'
+                      '    src/s.cpp:5  | const char* s = "表"; Run();\n'
+                      '    src/s.cpp:6  | /* 表表 */ Run();', out)
+        self.assertNotIn('inside comments', out)
+        # 「表」の 2 バイト目は `\`(0x5C)。直さずに読むと、索引の後に変わったファイルの行の付け直しも外れる
+        with open(fp, 'wb') as f:
+            f.write(('// top\n' + src).encode('cp932'))
+        out = self.ltq('refs', 'Run')
+        self.assertIn('src/s.cpp:5  [in Main]  [moved from line 4]', out)
+        self.assertEqual(ltq.to_utf8('表'.encode('cp932'), 'cp932'), '表'.encode('utf-8'))
+        self.assertEqual(ltq.to_utf8('表'.encode('utf-16'), None), '表'.encode('utf-8'))
+        self.assertEqual(ltq.to_utf8(b'\x95\x5c', None), b'\x95\x5c')  # コードページの記録が無い古い索引ではそのまま
+
+    def test_deps_count_headers_without_rows(self):
+        # 参照もコメントも無いヘッダーも、.deps.tsv にあれば「どの構成も読んでいない新しいファイル」にしない
+        self.write('src/empty.h', '#pragma once\n', self.t0 - 10)
+        self.index('index', self.COMMON, [self.COMMENT], deps={'src/a.cpp': ['src/a.cpp', 'src/empty.h']})
+        self.write('src/empty.h', '#pragma once\n// edited\n')
+        out = self.ltq('refs', 'Run')
+        self.assertIn('1 source files changed after indexing', out)
+        self.assertIn('    src/empty.h\n', out)
+        self.assertNotIn('not read by any indexed configuration', out)
+        self.assertIn('index: .index/index.tsv (built', out)  # .deps.tsv を 2 つ目の構成として拾わない
+        self.assertNotIn('configurations', out)
 
     def test_explicit_index_option_is_repeatable(self):
         self.two_configs()

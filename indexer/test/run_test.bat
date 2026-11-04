@@ -17,6 +17,8 @@ if not exist out\werror mkdir out\werror
 rem The source line of a column-1 reference must not include the previous line
 findstr /c:"werror.cpp:11:1" out\werror\werror.tsv >nul || (echo FAIL: no reference at werror.cpp:11:1 & set RC=1)
 findstr /c:"Value(); Base" out\werror\werror.tsv >nul && (echo FAIL: source line joined with the previous line & set RC=1)
+rem Shift_JIS / UTF-16 sources, virtual overrides, -update (test_ltidx.py)
+python -I -W error::ResourceWarning -m unittest discover -s . || set RC=1
 if %RC%==0 echo PASS
-pause
+if not defined CI pause
 exit /b %RC%

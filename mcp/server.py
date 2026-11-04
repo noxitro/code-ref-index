@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'query'))
 import ltq  # noqa: E402
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 PROTOCOL = '2025-06-18'
 
 INSTRUCTIONS = (
@@ -31,7 +31,8 @@ TOOLS = [
             'Find every call site, reference, definition and declaration of a C++ symbol, resolved by clang '
             'over all translation units (including template instantiations). Use this instead of grep for C++ '
             'symbol searches. One call returns: calls (with the enclosing function), other references, '
-            'definitions, unresolved calls inside templates with the same name (decide those from the source '
+            'definitions, virtual overrides (calls through a base class that may dispatch to the symbol), '
+            'unresolved calls inside templates with the same name (decide those from the source '
             'line), and every text match of the name that is NOT in the index with the reason '
             '(comment, inactive #if, macro definition, string literal, file not analyzed). '
             'The calls section needs no re-verification with grep.'),

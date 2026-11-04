@@ -7,6 +7,7 @@
 """
 import argparse
 import bisect
+import codecs
 import os
 import re
 import sys
@@ -16,6 +17,41 @@ SRC_EXT = {'.h', '.hh', '.hpp', '.hxx', '.c', '.cc', '.cpp', '.cxx', '.inl', '.i
            '.m', '.mm'}
 TU_EXT = {'.c', '.cc', '.cpp', '.cxx', '.cppm', '.ixx', '.m', '.mm'}  # 単独でコンパイルされうるもの
 DEFS = ('def', 'decl')
+OVERRIDE = 'override'  # 3 列目は呼び出し元ではなく、上書きされる基底のメソッド
+CP_CODECS = {65001: None, 51932: 'euc_jp', 20932: 'euc_jp', 28591: 'latin-1'}  # ほかは cp<番号>
+
+
+def cp_codec(cp):
+    """Windows のコードページ番号を Python の codec 名に。UTF-8 か分からなければ None。"""
+    name = CP_CODECS.get(cp, f'cp{cp}')
+    if name is None:
+        return None
+    try:
+        codecs.lookup(name)
+    except LookupError:
+        return None
+    return name
+
+
+def to_utf8(data, codec):
+    """ltidx と同じく、UTF-16(BOM 付き)と UTF-8 として正しくないソースを UTF-8 のバイト列に直す。
+    後者は索引を作ったときのコードページ(codec)で読む。索引の列番号は直した後のバイト位置。"""
+    if data[:2] in (b'\xff\xfe', b'\xfe\xff'):
+        try:
+            return data.decode('utf-16').encode('utf-8')
+        except UnicodeDecodeError:
+            return data
+    if codec is None or data.startswith(b'\xef\xbb\xbf'):
+        return data
+    try:
+        data.decode('utf-8')
+        return data
+    except UnicodeDecodeError:
+        pass
+    try:
+        return data.decode(codec).encode('utf-8')
+    except UnicodeDecodeError:
+        return data
 
 
 def longest_increasing(pairs):
@@ -60,6 +96,7 @@ class Index:
         self.mtime = min(p.mtime for p in self.parts)  # 鮮度は最も古い索引で判定する
         self._seen = None
         self._fresh = None
+        self._codec = False
         self._lines = {}
         self._maps = {}  # (構成名, path) -> 行の付け直しの対応。rows() が作り、skips() も使う
 
@@ -67,7 +104,7 @@ class Index:
         if path not in self._lines:
             try:
                 with open(os.path.join(self.root, path), 'rb') as f:
-                    data = f.read()
+                    data = to_utf8(f.read(), self.codec())
             except OSError:
                 data = None
             self._lines[path] = None if data is None else [canon_line(x) for x in data.split(b'\n')]
@@ -226,8 +263,9 @@ class Index:
         return res
 
     def seen(self):
-        """{構成名: その構成のどれかの TU が読んだファイルの集合}。TU の主ファイル、コメントか無効な #if のあるファイル、
-        索引に行のあるファイル。参照もコメントも無いヘッダーは数えられない。"""
+        """{構成名: その構成のどれかの TU が読んだファイルの集合}。TU の主ファイル、TU が読んだファイルの記録(.deps.tsv)、
+        コメントか無効な #if のあるファイル、索引に行のあるファイル。.deps.tsv の無い古い索引では、
+        参照もコメントも無いヘッダーは数えられない。"""
         if self._seen is None:
             self._seen = {}
             for part in self.parts:
@@ -249,6 +287,11 @@ class Index:
                     with open(sp, 'rb') as f:
                         next(f, None)
                         raw_paths.update(raw.split(b'\t', 1)[0] for raw in f)
+                dp = part.path + '.deps.tsv'
+                if os.path.exists(dp):
+                    with open(dp, 'rb') as f:
+                        next(f, None)
+                        raw_paths.update(raw.rstrip(b'\r\n').split(b'\t')[-1] for raw in f)
                 s.update(p.decode('utf-8', 'replace') for p in raw_paths)
                 self._seen[part.name] = s
         return self._seen
@@ -261,8 +304,9 @@ class Index:
         return '' if saw <= r[8] else ', '.join(sorted(r[8]))
 
     def _tu(self, part):
+        """(TU 数, [(エラーのあった TU, 最初のエラー)], TU の主ファイルの集合, {コードページ: TU 数})"""
         tp = part.path + '.tu.tsv'
-        total, bad, files = 0, [], set()
+        total, bad, files, cps = 0, [], set(), {}
         if os.path.exists(tp):
             with open(tp, encoding='utf-8', errors='replace') as f:
                 next(f, None)
@@ -274,13 +318,28 @@ class Index:
                     files.add(self.rel(c[0]))
                     if c[1] != '1':
                         bad.append((self.rel(c[0]), c[5] if len(c) > 5 else ''))
-        return total, bad, files
+                    if len(c) > 7 and c[7].isdigit():
+                        cps[int(c[7])] = cps.get(int(c[7]), 0) + 1
+        return total, bad, files, cps
+
+    def codec(self):
+        """UTF-8 でないソースを読む codec。ltidx が TU ごとに記録したコードページのうち、UTF-8(65001)以外で最も多いもの。
+        /utf-8 の TU が多くても、一部の TU が Shift_JIS で読んだファイルは ltidx が直しているので、直す側に倒す
+        (UTF-8 として正しいファイルは直さないので変わらない)。記録の無い古い索引では None(バイト列のまま突き合わせる)。"""
+        if self._codec is False:
+            cps = {}
+            for part in self.parts:
+                for cp, n in self._tu(part)[3].items():
+                    if cp != 65001:
+                        cps[cp] = cps.get(cp, 0) + n
+            self._codec = cp_codec(max(cps, key=cps.get)) if cps else None
+        return self._codec
 
     def tu_status(self):
         """(TU 数, [(エラーのあった TU, 最初のエラー, 構成名)], TU の主ファイルの集合)。構成をまたいで足す。"""
         total, bad, files = 0, [], set()
         for part in self.parts:
-            t, b, f = self._tu(part)
+            t, b, f, _ = self._tu(part)
             total += t
             bad += [(p, e, part.name) for p, e in b]
             files |= f
@@ -321,12 +380,12 @@ class Index:
         multi = len(self.parts) > 1
         if not multi:
             part = self.parts[0]
-            total, bad, _ = self._tu(part)
+            total, bad, _, _ = self._tu(part)
             print(f'index: {self.rel(part.path)} (built {built(part)}; TU {total - len(bad)}/{total} without errors)')
         else:
             print(f'index: {len(self.parts)} configurations, merged')
             for part in self.parts:
-                total, b, _ = self._tu(part)
+                total, b, _, _ = self._tu(part)
                 print(f'  {part.name}: {self.rel(part.path)} (built {built(part)}; TU {total - len(b)}/{total} without errors)')
             print('  references found only in some of the configurations that read the file are marked [only in ...]')
         bad = {}
@@ -413,6 +472,7 @@ def text_hits(idx, short, excludes):
             continue
         if sb not in data:
             continue
+        data = to_utf8(data, idx.codec())  # Shift_JIS の 2 バイト目が英字になる偽の一致も、直してから探せば出ない
         rel = idx.rel(fp)
         stale = os.path.getmtime(fp) > idx.mtime
         starts = None
@@ -454,6 +514,17 @@ def fmt(r, show_sym, idx):
     return s + f'  | {src}'
 
 
+def closure(start, edges):
+    """start から edges({記号: {記号}})を辿って届く記号(start 自身は除く)。"""
+    seen, todo = set(), list(start)
+    while todo:
+        for y in edges.get(todo.pop(), ()):
+            if y not in seen:
+                seen.add(y)
+                todo.append(y)
+    return seen - set(start)
+
+
 def section(title, items, limit):
     print(f'\n== {title}: {len(items)}')
     for s in items[:limit]:
@@ -471,6 +542,14 @@ def cmd_refs(a, idx):
         return sym == name or sym.endswith('::' + name)
 
     rows = [r for r in idx.rows(lambda raw: sb in raw) if r[0].rsplit('::', 1)[-1] == short]
+    # 仮想関数の上書き(上書きするメソッド -> 上書きされる基底のメソッド)。同じ名前なので rows に入っている
+    up, down, ov_at = {}, {}, {}
+    for r in rows:
+        if r[1] == OVERRIDE:
+            up.setdefault(r[0], set()).add(r[2])
+            down.setdefault(r[2], set()).add(r[0])
+            ov_at.setdefault(r[0], (r[3], r[4]))
+    rows = [r for r in rows if r[1] != OVERRIDE]
     target = [r for r in rows if match(r[0])]
     deps = [r for r in rows if r[0] == '?::' + short]
     syms = sorted({r[0] for r in target})
@@ -507,6 +586,27 @@ def cmd_refs(a, idx):
             [fmt(r, show_sym, idx) for r in uses], a.limit)
     section('definitions and declarations', [fmt(r, show_sym, idx) for r in defs], a.limit)
 
+    # 基底のポインタや参照越しの呼び出しは、clang が基底のメソッドに解決する。実行時に上書きへ届くかは型次第
+    bases, derived = closure(syms, up), closure(syms, down)
+    if bases or derived:
+        print('\n== virtual dispatch')
+    if bases:
+        via = sorted((r for r in rows if r[0] in bases and r[1].startswith('call')), key=key)
+        print(f'  the query overrides {", ".join(sorted(bases))}. Calls to those may run the query at runtime,'
+              ' depending on the dynamic type of the receiver; they are not counted above:'
+              f' {len(via)}')
+        for s in [fmt(r, True, idx) for r in via][:a.limit]:
+            print('    ' + s)
+        if len(via) > a.limit:
+            print(f'    ... {len(via) - a.limit} more (raise --limit)')
+    if derived:
+        n = sum(1 for r in rows if r[0] in derived and r[1].startswith('call'))
+        print(f'  overridden by (calls through a pointer or reference to the query\'s class may run these instead;'
+              f' calls resolved to these, {n}, call the override, not the query):')
+        for d in sorted(derived):
+            p, ln = ov_at.get(d, ('?', 0))
+            print(f'    {d}  {p}:{ln}')
+
     # dep 行: テンプレート本体では未解決。実体化で解決された位置は、その解決先を添える
     at = {}
     for r in rows:
@@ -518,7 +618,7 @@ def cmd_refs(a, idx):
         if (r[3], r[4]) in target_pos:
             dep_dup += 1  # 実体化で対象に解決済み。上の calls に載っている
             continue
-        resolved = sorted({x[0] for x in at[(r[3], r[4])] if x[0] != r[0] and not x[1].startswith(DEFS)})
+        resolved = sorted({x[0] for x in at[(r[3], r[4])] if x[0] != r[0] and not x[1].startswith(DEFS + (OVERRIDE,))})
         if resolved:
             mark = '  (instantiations resolve it to ' + ', '.join(resolved) + ' -> probably not the query)'
         else:
@@ -540,7 +640,7 @@ def cmd_refs(a, idx):
     loose = [h for h in hits if (h[0], h[1]) not in at]
     ranges = idx.skips({h[0] for h in loose})
     parsed = known | set(ranges) | idx.tu_status()[2]
-    tagged = {r[0] for r in target} | {'?::' + short}
+    tagged = {r[0] for r in target} | {'?::' + short} | bases | derived
     others = {}
     for r in rows:
         if r[0] not in tagged:
@@ -605,7 +705,8 @@ def cmd_check(a, idx):
         multi = len(idx.parts) > 1
         for r in sorted(here, key=lambda r: r[5]):
             only = idx.partial(r)
-            print(f'  indexed: {r[1]} {r[0]} at col {r[5]}' + (f'  [in {r[2]}]' if r[2] else '')
+            rel = f'  [overrides {r[2]}]' if r[1] == OVERRIDE else f'  [in {r[2]}]' if r[2] else ''
+            print(f'  indexed: {r[1]} {r[0]} at col {r[5]}' + rel
                   + (f'  [{r[7]}]' if r[7] else '') + (f'  [only in {only}]' if only else ''))
         shown = set()
         for k, b, e, n in ranges.get(path, []):
@@ -623,12 +724,13 @@ def cmd_check(a, idx):
 
 
 def find_indexes(root):
-    """<root>/.index の中の索引本体(.tu.tsv と .skip.tsv 以外の .tsv)すべて。構成ごとに 1 つ置く。
+    """<root>/.index の中の索引本体(.tu.tsv・.skip.tsv・.deps.tsv 以外の .tsv)すべて。構成ごとに 1 つ置く。
     index.tsv を先頭にし、残りは名前順。"""
     d = os.path.join(root, '.index')
     if not os.path.isdir(d):
         return []
-    main = sorted((f for f in os.listdir(d) if f.endswith('.tsv') and not f.endswith(('.tu.tsv', '.skip.tsv'))),
+    side = ('.tu.tsv', '.skip.tsv', '.deps.tsv')
+    main = sorted((f for f in os.listdir(d) if f.endswith('.tsv') and not f.endswith(side)),
                   key=lambda f: (f != 'index.tsv', f))
     return [os.path.join(d, f) for f in main]
 
