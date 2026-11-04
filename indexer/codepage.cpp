@@ -21,3 +21,22 @@ bool codepageToUtf8(unsigned Cp, const char *P, size_t N, std::string &Out) {
 }
 
 unsigned ansiCodepage() { return GetACP(); }
+
+// 8.3 形式の短い名前。取れなければ(8.3 名を作らないボリュームなど)そのまま返す
+std::string shortPath(const std::string &P) {
+  int W = MultiByteToWideChar(CP_UTF8, 0, P.data(), (int)P.size(), nullptr, 0);
+  if (W <= 0) return P;
+  std::wstring Wide(W, L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, P.data(), (int)P.size(), Wide.data(), W);
+  DWORD N = GetShortPathNameW(Wide.c_str(), nullptr, 0);
+  if (N == 0) return P;
+  std::wstring Short(N, L'\0');
+  N = GetShortPathNameW(Wide.c_str(), Short.data(), N);
+  if (N == 0) return P;
+  Short.resize(N);
+  int U = WideCharToMultiByte(CP_UTF8, 0, Short.data(), (int)N, nullptr, 0, nullptr, nullptr);
+  if (U <= 0) return P;
+  std::string Out(U, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, Short.data(), (int)N, Out.data(), U, nullptr, nullptr);
+  return Out;
+}

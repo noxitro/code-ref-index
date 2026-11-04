@@ -126,6 +126,7 @@ class Index:
         self.mtime = min(p.mtime for p in self.parts)  # 鮮度は最も古い索引で判定する
         self._seen = None
         self._fresh = None
+        self._roots = None
         self._codec = False
         self._sources = None
         self._lines = {}
@@ -379,9 +380,14 @@ class Index:
         return total, bad, files
 
     def rel(self, p):
+        """ルートからの相対パス。ルートは、渡された書き方と実体のパス(8.3 形式の短い名前を長い名前にしたもの)の両方で見る。"""
         a = os.path.abspath(p)
-        if a.lower().startswith(self.root.lower() + os.sep):
-            a = a[len(self.root) + 1:]
+        if self._roots is None:
+            self._roots = sorted({r.lower() for r in (self.root, os.path.realpath(self.root))}, key=len, reverse=True)
+        low = a.lower()
+        for r in self._roots:
+            if low.startswith(r + os.sep):
+                return a[len(r) + 1:].replace('\\', '/')
         return a.replace('\\', '/')
 
     def freshness(self):

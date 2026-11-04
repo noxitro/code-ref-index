@@ -195,6 +195,24 @@ class LtidxTest(unittest.TestCase):
         self.assertTrue(self.has('B', 'def', 'a.cpp:2:6'))
         self.assertEqual(sorted(os.listdir(d)), sorted(names))
 
+    def test_root_written_differently(self):
+        # ルートを 8.3 形式の短い名前で渡し、compile_commands.json は長い名前(MSBuild が返す形)。どちらでもルート配下と判定する
+        import ctypes
+        long_dir = os.path.join(self.root, 'a-long-directory-name')
+        buf = ctypes.create_unicode_buffer(1024)
+        os.makedirs(long_dir)
+        if not ctypes.windll.kernel32.GetShortPathNameW(long_dir, buf, 1024) or buf.value.lower() == long_dir.lower():
+            self.skipTest('8.3 names are not available on this volume')
+        short_dir = buf.value
+        self.root = long_dir
+        self.write('a.cpp', 'void Run();\nvoid Main() { Run(); }\n', [])
+        for root in (short_dir, long_dir):
+            r = subprocess.run([LTIDX, '-p', long_dir, '-root', root, '-o', os.path.join(long_dir, 'o.tsv')],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue(self.has('Run', 'call', 'a.cpp:2:15', out='o.tsv'), root)
+        self.root = os.path.dirname(long_dir)  # tearDown で消す
+
     def test_update_needs_previous_index(self):
         self.write('a.cpp', 'void A() {}\n', [])
         rc, err = self.run_ltidx('-update')

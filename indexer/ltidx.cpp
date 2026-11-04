@@ -34,6 +34,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -45,6 +46,7 @@
 
 bool codepageToUtf8(unsigned Cp, const char *P, size_t N, std::string &Out);  // codepage.cpp
 unsigned ansiCodepage();
+std::string shortPath(const std::string &P);  // 8.3 形式の短い名前(取れなければそのまま)
 
 using namespace clang;
 namespace cl = llvm::cl;
@@ -76,9 +78,17 @@ std::string normalize(llvm::StringRef P, const FileManager *FM = nullptr) {
   return std::string(S);
 }
 
-bool underRoot(const std::string &Abs, const std::string &R, std::string &Rel) {
-  if (Abs.size() <= R.size() || !llvm::StringRef(Abs).starts_with_insensitive(R)) return false;
-  Rel = Abs.substr(R.size());
+// Roots はルートの別の書き方(渡されたまま・長い名前・8.3 形式の短い名前)。どれかで始まればルート配下
+bool underRoot(const std::string &Abs, const std::vector<std::string> &Roots, std::string &Rel) {
+  const std::string *Hit = nullptr;
+  for (const auto &R : Roots)
+    if (Abs.size() > R.size() && llvm::StringRef(Abs).starts_with_insensitive(R) &&
+        (Abs[R.size()] == '\\' || Abs[R.size()] == '/' || R.back() == '\\' || R.back() == '/')) {
+      Hit = &R;
+      break;
+    }
+  if (!Hit) return false;
+  Rel = Abs.substr(Hit->size());
   while (!Rel.empty() && (Rel[0] == '\\' || Rel[0] == '/')) Rel.erase(0, 1);
   for (char &C : Rel) if (C == '\\') C = '/';
   return true;
@@ -239,8 +249,8 @@ bool isCharsetArg(llvm::StringRef A) {
 // ルート配下の位置だけを TSV の行にする。索引と依存呼び出しの両方が使う。
 class RowWriter {
 public:
-  RowWriter(const std::string &R, std::vector<std::string> &Rows, std::vector<std::string> &Skips)
-      : Root(R), Rows(Rows), Skips(Skips) {}
+  RowWriter(const std::vector<std::string> &R, std::vector<std::string> &Rows, std::vector<std::string> &Skips)
+      : Roots(R), Rows(Rows), Skips(Skips) {}
 
   void add(const SourceManager &SM, SourceLocation Loc, std::string Sym, const std::string &Role,
            std::string Caller) {
@@ -285,12 +295,12 @@ private:
     if (It == PathCache.end()) {
       std::string Rel;
       OptionalFileEntryRef FE = SM.getFileEntryRefForID(FID);
-      It = PathCache.try_emplace(FID, FE && underRoot(normalize(FE->getName(), &SM.getFileManager()), Root, Rel) ? Rel : "").first;
+      It = PathCache.try_emplace(FID, FE && underRoot(normalize(FE->getName(), &SM.getFileManager()), Roots, Rel) ? Rel : "").first;
     }
     return It->second;
   }
 
-  std::string Root;
+  std::vector<std::string> Roots;
   std::vector<std::string> &Rows, &Skips;
   llvm::DenseMap<FileID, std::string> PathCache;
 };
@@ -443,7 +453,7 @@ struct Output {
 
 class IndexAction : public ASTFrontendAction {
 public:
-  IndexAction(const std::string &R, Output &O) : Root(R), O(O), W(R, O.Rows, O.Skips), C(W) {}
+  IndexAction(const std::vector<std::string> &R, Output &O) : Roots(R), O(O), W(R, O.Rows, O.Skips), C(W) {}
 
   bool BeginSourceFileAction(CompilerInstance &CI) override {
     Preprocessor &PP = CI.getPreprocessor();
@@ -457,7 +467,7 @@ public:
     const SourceManager &SM = CI.getSourceManager();
     for (auto It = SM.fileinfo_begin(); It != SM.fileinfo_end(); ++It) {
       std::string Rel;
-      if (underRoot(normalize(It->first.getName(), &SM.getFileManager()), Root, Rel)) O.Deps.push_back(Rel);
+      if (underRoot(normalize(It->first.getName(), &SM.getFileManager()), Roots, Rel)) O.Deps.push_back(Rel);
     }
   }
 
@@ -475,7 +485,7 @@ public:
   }
 
 private:
-  std::string Root;
+  std::vector<std::string> Roots;
   Output &O;
   RowWriter W;
   Comments C;
@@ -483,11 +493,11 @@ private:
 
 class Factory : public tooling::FrontendActionFactory {
 public:
-  Factory(const std::string &R, Output &O) : Root(R), O(O) {}
-  std::unique_ptr<FrontendAction> create() override { return std::make_unique<IndexAction>(Root, O); }
+  Factory(const std::vector<std::string> &R, Output &O) : Roots(R), O(O) {}
+  std::unique_ptr<FrontendAction> create() override { return std::make_unique<IndexAction>(Roots, O); }
 
 private:
-  std::string Root;
+  std::vector<std::string> Roots;
   Output &O;
 };
 
@@ -687,6 +697,13 @@ int main(int argc, const char **argv) {
   for (const auto &F : Cdb->getAllFiles())
     if (llvm::sys::fs::exists(F) && !llvm::StringRef(F).ends_with(".ixx")) All.push_back(F);
   std::string RootN = normalize(Root);
+  // ルートとファイルのパスで書き方が違うことがある(CI の一時フォルダ RUNNER~1 と、MSBuild が返す runneradmin など)
+  std::vector<std::string> Roots{RootN};
+  llvm::SmallString<260> Real;
+  if (!llvm::sys::fs::real_path(RootN, Real)) Roots.push_back(normalize(Real));
+  Roots.push_back(normalize(shortPath(RootN)));
+  std::sort(Roots.begin(), Roots.end());
+  Roots.erase(std::unique(Roots.begin(), Roots.end()), Roots.end());
   std::vector<std::string> Todo(Files.begin(), Files.end());
   Kept K;
   if (Update) {
@@ -751,7 +768,7 @@ int main(int argc, const char **argv) {
             tooling::getInsertArgumentAdjuster("/Zc:twoPhase", tooling::ArgumentInsertPosition::END));
       ErrorCounter Diag;
       Tool.setDiagnosticConsumer(&Diag);
-      Factory F(RootN, O);
+      Factory F(Roots, O);
       int Rc = Tool.run(&F);
       double Sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count();
       bool Good = Rc == 0 && Diag.Errors == 0;
