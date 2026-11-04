@@ -22,13 +22,15 @@ CLI 方式(`ltq`)と違って Copilot にシェルを渡す必要が無く、ツ
 Copilot が起動するので、手で起動する必要はありません。手で動かすときは次のとおりです(標準入出力で JSON-RPC を話します)。
 
 ```bat
-code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>] [--auto-update-wait 秒 | --no-auto-update]
+code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>] [--auto-update-wait 秒 | --no-auto-update] [--max-output-bytes N]
 ```
 
 - `--root` を省くと、起動されたときのカレントフォルダから親へさかのぼり、`.index` のある最初のフォルダをルートにします(`.git` と同じ探し方)。Copilot CLI は作業フォルダで起動するので、ソースのルートより下で起動しても、ルートの索引を引きます。そのときは出力の先頭に `root: <ルート> (the index is in this parent folder ...)` と出し、パスはルートからの相対で返します。探すのは呼び出しのたびなので、サーバーの起動後に作った索引も拾います
 - `--index` を省くと、`<ルート>\.index` の中の索引本体(構成ごとの `<名前>.tsv`)をすべてまとめて引きます
 - 環境変数 `CRI_ROOT` と `CRI_INDEX` でも指定できます
 - `--auto-update-wait`(既定 10 秒)と `--no-auto-update` は、下の「索引の自動更新」を参照してください。環境変数 `CRI_AUTO_UPDATE_WAIT`・`CRI_AUTO_UPDATE=0` でも指定できます
+- `--max-output-bytes`(既定 18,000)は、結果の大きさの上限です。超えると、`refs` は短い形(`ltq refs --compact`)で出し直し、それでも超えれば末尾を切って、そう書き添えます。環境変数 `CRI_MAX_OUTPUT_BYTES` でも指定でき、0 で切りません
+  - Copilot CLI(1.0.105)は、ツールの結果が 20,480 バイト(環境変数 `COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES`)を超えると、中身をモデルに渡さず、ファイルに退かせて先頭だけを見せます。大きなコードベースでよくある名前を引くと 75〜110 KB になり、答えの要の部分が届かなかったので、上限を設けました(`../docs/design.md` の「測り直し」)
 
 ## 索引の自動更新
 
