@@ -34,7 +34,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 | [indexer](indexer/README.md) | `ltidx`: `compile_commands.json` の全 TU を解析し、参照の TSV を作る(C++、Windows) |
 | [query](query/README.md) | `ltq`: 索引の問い合わせ CLI(Python) |
 | [mcp](mcp/README.md) | MCP サーバー: `ltq` の `refs` / `check` を Copilot のツールとして渡す(Python) |
-| [scripts](scripts/README.md) | `index-project.bat`: プロジェクトの索引を作る(`compile_commands.json` が無ければ作る。`-Update` で変わった TU だけ作り直す)。`make-cdb.bat`: Visual Studio のソリューションか CMake から `compile_commands.json` を作る。`register-copilot.bat`: Copilot CLI に MCP サーバーを登録する |
+| [scripts](scripts/README.md) | `index-project.bat`: プロジェクトの索引を作る(`compile_commands.json` が無ければ作る。`-Update` で変わった TU だけ作り直す)。`make-cdb.bat`: Visual Studio のソリューションか CMake から `compile_commands.json` を作る。`register-copilot.bat`: Copilot CLI に MCP サーバーを登録する。`setup-instructions.bat`: 使い方の指示を足す・消す |
 | `run-tests.bat` | すべてのテストを流す(下の「動作確認」) |
 | [bench](bench/README.md) | Copilot CLI での検索手段の比較(rg・LSP・索引・CLI・MCP) |
 | [docs](docs/design.md) | 設計と計測の記録 |
@@ -55,7 +55,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 
    VS Code や、プロジェクト単位の登録は [mcp/README.md](mcp/README.md) を参照してください
    - MCP サーバーの名前は、旧名の `code-ref-index` のままです。ツールの名前(`code-ref-index-refs` など)がこの名前から付き、計測はこの名前で行ったためです
-5. **使い方の指示を足す(推奨)**: [bench/mcp-instructions.md](bench/mcp-instructions.md) の内容を、プロジェクトの `.github/copilot-instructions.md` に足します
+5. **使い方の指示を足す(推奨)**: `scripts\setup-instructions.bat` をダブルクリックし、ソースのルートを入れて「1: 足す」を選びます。プロジェクトの `.github\copilot-instructions.md` に [bench/mcp-instructions.md](bench/mcp-instructions.md) の内容が入ります。やめるときは同じ .bat で「2: 消す」を選ぶと、足した部分だけが消えます
 
 ## 動作確認
 

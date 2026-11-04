@@ -1,4 +1,4 @@
-# scripts — 索引を作る・Copilot に登録する
+# scripts — 索引を作る・Copilot に登録する・使い方の指示を足す
 
 ## 目的
 
@@ -9,6 +9,7 @@
 | `index-project.bat` | 索引を `<ルート>\.index\` に作る。`compile_commands.json` が無ければ `make-cdb` で作ってから解析する |
 | `make-cdb.bat` | Visual Studio のソリューション・プロジェクトか CMake のプロジェクトから、`compile_commands.json` を作る(ビルドはしない) |
 | `register-copilot.bat` | Copilot CLI のユーザー設定に MCP サーバーを登録する |
+| `setup-instructions.bat` | プロジェクトの `.github\copilot-instructions.md` に、使い方の指示を足す・消す |
 
 ## 前提
 
@@ -53,6 +54,22 @@ index-project.bat -Root D:\src\game -Cdb D:\build\game
 
 `make-cdb.bat` だけを使うこともできます(引数は `-Root`・`-Project`・`-Configuration`・`-Platform`・`-CMakeArgs`・`-Out`)。
 
+### 使い方の指示を足す・消す(`setup-instructions.bat`)
+
+`setup-instructions.bat` をダブルクリックし、ソースのルートを入れます。今の状態(入っているかどうか)が出るので、番号を選びます。
+
+- **1: 足す**: [../bench/mcp-instructions.md](../bench/mcp-instructions.md) の中身を、`<ルート>\.github\copilot-instructions.md` の末尾に足します。ファイルが無ければ作ります。すでに入っていれば、最新の中身に差し替えます
+- **2: 消す**: 足した部分だけを消します。ほかに中身が無くなったら、ファイルごと消します
+
+足した部分は `<!-- cxxref:begin ... -->` と `<!-- cxxref:end -->` の目印で囲みます。目印の外(自分で書いた指示)は書き換えません。目印の間を手で書き換えても、次に「足す」か「消す」を選ぶと上書き・削除されます。改行(CRLF/LF)と BOM の有無は、元のファイルに合わせます。
+
+聞かずに実行するときは引数で指定します。
+
+```bat
+setup-instructions.bat -Root D:\src\game -Action Add
+setup-instructions.bat -Root D:\src\game -Action Remove
+```
+
 ## 仕組みと制約
 
 - **Visual Studio**: MSBuild の `GetClCommandLines` ターゲット(Visual Studio が IntelliSense に使うもの)を、全プロジェクトに 1 回の MSBuild でまとめて呼び、各 .cpp の cl のコマンドラインを取り出します。プロジェクトのプロパティの設定(include パス・マクロ・言語の版・強制インクルードなど)は、cl に渡るとおりに入ります
@@ -72,3 +89,4 @@ index-project.bat -Root D:\src\game -Cdb D:\build\game
 - 壊れたプロジェクトが混ざっていても、ほかのプロジェクトの分ができること
 - 要求したプラットフォームを持たないプロジェクトを読まないこと
 - `index-project` だけで索引ができ、「VC++ ディレクトリ」のヘッダーの定義も索引に載ること
+- `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)
