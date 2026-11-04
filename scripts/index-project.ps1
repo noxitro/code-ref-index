@@ -3,13 +3,14 @@
 # compile_commands.json を -Cdb で渡さず、ルートにも無ければ、make-cdb.ps1 で作る(.slnx / .sln / .vcxproj / CMakeLists.txt から)。
 # 構成(Debug/Release、プラットフォームなど)ごとに -Name を変えて作ると、ltq と MCP サーバーはすべてをまとめて引く。
 # -Update を付けると、前回の後に変わったファイルを読む TU・新しい TU・コマンドの変わった TU だけを解析し直す。
+[CmdletBinding()]  # 知らない引数をエラーにする(黙って捨てない)
 param(
     [string]$Root,                  # ソースのルート(索引のパスの起点。MCP サーバーもここで動かす)
     [string]$Cdb,                   # compile_commands.json のあるフォルダ(省くと、ルートのもの、無ければ作る)
     [string]$Project,               # compile_commands.json を作る元(.slnx / .sln / .vcxproj / CMakeLists.txt)。省くと探す
     [string]$Configuration = 'Debug',
     [string]$Platform = 'x64',
-    [string[]]$CMakeArgs = @(),     # CMake の構成に足す引数(例: -DBUILD_EXAMPLES=ON)
+    [string]$CMakeArgs = '',      # CMake の構成に足す引数。複数は空白で区切って 1 つの文字列に(例: "-DA=1 -DB=2")
     [string]$Name = 'index',        # 索引の名前(構成名)。英数字・_・- のみ
     [int]$Jobs = [Math]::Max(1, [int]([Environment]::ProcessorCount / 2)),
     [switch]$Update                 # 前回の索引の後に変わった TU だけを解析し直す(初回は全体を作る)

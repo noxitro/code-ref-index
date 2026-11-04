@@ -268,6 +268,20 @@ class LtqTest(unittest.TestCase):
         self.assertIn('index: .index/index.tsv (built', out)  # .deps.tsv を 2 つ目の構成として拾わない
         self.assertNotIn('configurations', out)
 
+    def test_grep_lines(self):
+        # 改行で始まる needle は行頭に当たる。ファイルが改行で始まっても止まらない。CRLF の行も改行を除いて返す
+        fp = os.path.join(self.root, 'g.tsv')
+        with open(fp, 'wb') as f:
+            f.write(b'\nLoad\tx\r\nfoo Load\tz\nLoad\ty')
+        self.assertEqual(ltq.grep_lines(fp, [b'\nLoad\t']), [b'Load\tx', b'Load\ty'])
+        self.assertEqual(ltq.grep_lines(fp, [b'Load\t', b'\nLoad\t']), [b'Load\tx', b'foo Load\tz', b'Load\ty'])
+        with open(fp, 'wb') as f:
+            f.write(b'Load\ta\n')
+        self.assertEqual(ltq.grep_lines(fp, [b'\nLoad\t']), [b'Load\ta'])
+        with open(fp, 'wb'):
+            pass
+        self.assertEqual(ltq.grep_lines(fp, [b'Load']), [])
+
     def test_explicit_index_option_is_repeatable(self):
         self.two_configs()
         d = os.path.join(self.root, '.index')

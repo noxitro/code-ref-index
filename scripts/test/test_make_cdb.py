@@ -89,7 +89,10 @@ class MakeCdbTest(unittest.TestCase):
         self.assertIn('/Iinc', cmd)
         self.assertIn('/std:c++20', cmd)
         self.assertIn('/D UNICODE', cmd)
-        self.assertIn('vcdir', cmd)  # IncludePath は /imsvc で足す
+        # 「VC++ ディレクトリ」に足したフォルダは /I(/imsvc にするとシステムのヘッダー扱いで索引に載らない)。VS・SDK の既定は /imsvc
+        self.assertRegex(cmd, r'"/I[^"]*vcdir"')
+        self.assertNotRegex(cmd, r'/imsvc[^"]*vcdir')
+        self.assertIn('/imsvc', cmd)
         self.assertEqual('/D ONLY_DEBUG' in cmd, cfg == 'Debug')
         return out
 
@@ -115,15 +118,46 @@ class MakeCdbTest(unittest.TestCase):
         self.ps('make-cdb.ps1', '-Root', self.root, '-Out', out)  # -Project を省くとルートの .sln を探す
         self.assertNotIn('ONLY_DEBUG', self.cdb(out)['a.cpp']['command'])
 
+    def test_broken_project_does_not_hide_others(self):
+        # 1 つのプロジェクトが評価エラー(Import 先が無い)でも、ほかのプロジェクトの分は作る
+        self.write('p.vcxproj', VCXPROJ)
+        self.write('broken.vcxproj', VCXPROJ.replace('<Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />',
+                                                    '<Import Project="missing\\nuget.targets" />'))
+        self.write('p.slnx', '<Solution>\n  <Project Path="p.vcxproj" />\n  <Project Path="broken.vcxproj" />\n</Solution>\n')
+        out = os.path.join(self.root, 'out-broken')
+        log = self.ps('make-cdb.ps1', '-Root', self.root, '-Out', out)
+        self.assertEqual(set(self.cdb(out)), {'a.cpp', 'b.cpp'}, log)
+
+    def test_platform_the_project_lacks(self):
+        # Win32 しか持たないプロジェクトを x64 で読まない(MSBuild は、構成の設定が抜けたコマンドラインを黙って返す)
+        win32 = VCXPROJ.replace('x64', 'Win32').replace('<LanguageStandard>', '<PreprocessorDefinitions>ONLYWIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions><LanguageStandard>')
+        self.write('w.vcxproj', win32)
+        self.write('p.vcxproj', VCXPROJ)
+        self.write('p.slnx', '<Solution>\n  <Project Path="p.vcxproj" />\n  <Project Path="w.vcxproj" />\n</Solution>\n')
+        out = os.path.join(self.root, 'out-plat')
+        r = subprocess.run([PWSH, '-NoProfile', '-File', os.path.join(SCRIPTS, 'make-cdb.ps1'), '-Root', self.root,
+                            '-Out', out], capture_output=True, text=True, encoding='utf-8', errors='replace')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('w.vcxproj', r.stdout + r.stderr)  # 読まなかったことを警告する(pwsh は警告を標準出力に出す)
+        self.assertNotIn('ONLYWIN32', json.dumps(self.cdb(out)))
+        # .slnx の <Platform> の対応があれば、そのプラットフォームで読む
+        self.write('p.slnx', '<Solution>\n  <Project Path="w.vcxproj">\n    <Platform Solution="*|x64" Project="Win32" />\n'
+                   '  </Project>\n</Solution>\n')
+        self.ps('make-cdb.ps1', '-Root', self.root, '-Out', out)
+        self.assertIn('ONLYWIN32', self.cdb(out)['a.cpp']['command'])
+
     def test_cmake(self):
         self.write('CMakeLists.txt', 'cmake_minimum_required(VERSION 3.20)\nproject(p CXX)\n'
                    'add_executable(p a.cpp b.cpp)\ntarget_include_directories(p PRIVATE inc vcdir)\n'
-                   'target_compile_definitions(p PRIVATE $<$<CONFIG:Debug>:ONLY_DEBUG>)\n')
+                   'target_compile_definitions(p PRIVATE $<$<CONFIG:Debug>:ONLY_DEBUG> A=${A} B=${B})\n')
         out = os.path.join(self.root, 'out-cmake')
-        self.ps('make-cdb.ps1', '-Root', self.root, '-Out', out)
+        self.ps('make-cdb.ps1', '-Root', self.root, '-Out', out, '-CMakeArgs', '-DA=1 -DB=2')
         c = self.cdb(out)
         self.assertEqual(set(c), {'a.cpp', 'b.cpp'})
-        self.assertIn('ONLY_DEBUG', c['a.cpp']['command'])
+        cmd = c['a.cpp']['command']
+        self.assertIn('ONLY_DEBUG', cmd)
+        self.assertIn('-DA=1', cmd)
+        self.assertIn('-DB=2', cmd)  # 2 つ目の引数も CMake に届く
 
     @unittest.skipUnless(os.path.exists(LTIDX), 'ltidx.exe is not built')
     def test_index_project_makes_cdb(self):
@@ -142,6 +176,8 @@ class MakeCdbTest(unittest.TestCase):
         rows = [line.split('\t') for line in text.splitlines()]
         self.assertTrue(any(r[0] == 'V' and r[1] == 'call' for r in rows), info)  # IncludePath のヘッダーも解決できた
         self.assertTrue(any(r[0] == 'Debug' and r[1] == 'call' for r in rows), info)
+        # 「VC++ ディレクトリ」のヘッダーの中の定義も索引にある
+        self.assertTrue(any(r[0] == 'V' and r[1] == 'def' and r[3].startswith('vcdir/v.h:') for r in rows), info)
 
 
 if __name__ == '__main__':

@@ -89,16 +89,21 @@ def grep_lines(path, needles):
     with open(path, 'rb') as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
         for n in needles:
             head = n[:1] == b'\n'
-            i = 0 if head and m[:len(n) - 1] == n[1:] else m.find(n)
-            while i >= 0:
-                if head and i:
+            if head and m[:len(n) - 1] == n[1:]:
+                i = 0  # 1 行目
+            else:
+                i = m.find(n)
+                if head and i >= 0:
                     i += 1  # find が返すのは直前の改行の位置
+            while i >= 0:
                 b = m.rfind(b'\n', 0, i) + 1
                 e = m.find(b'\n', i)
                 e = size if e < 0 else e
                 if b not in found:
                     found[b] = m[b:e].rstrip(b'\r')
                 i = m.find(n, e)
+                if head and i >= 0:
+                    i += 1
     return [found[b] for b in sorted(found)]
 
 
