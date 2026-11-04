@@ -12,8 +12,8 @@ param(
     [string]$Workspace = $env:CRI_BENCH_WORKSPACE,  # 解析対象のソースのコピー(.github と .index を書き換える)
     [string]$IndexDir = $env:CRI_BENCH_INDEXDIR,    # ltidx で作った索引の置き場所
     [string]$Clangd = 'clangd',     # 条件 B・D の clangd
-    [string]$Tasks = 'tasks.json',          # 問題と正解(bench 配下。別のコードベースは tasks-<名前>.json)
-    [string]$Format = 'answer-format.md'    # 回答の書式(bench 配下)
+    [string]$Tasks = 'tasks.json',          # 問題と正解(bench 配下。公開しない別のコードベースの問題は local\tasks-<名前>.json に置く)
+    [string]$Format = 'answer-format.md'    # 回答の書式(bench 配下。local\ に置いたものも指定できる)
 )
 $ErrorActionPreference = 'Stop'
 $bench = $PSScriptRoot
