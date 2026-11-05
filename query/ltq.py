@@ -8,6 +8,7 @@
 import argparse
 import bisect
 import codecs
+import collections
 import mmap
 import os
 import re
@@ -463,9 +464,17 @@ class Index:
         for p, e, n in self.tu_status()[1]:
             bad.setdefault((p, e), []).append(n)
         if bad:
+            # 大きなリポジトリでは失敗した TU が数百になり、並べるだけでクライアントの出力の上限を超える(O3DE で 180 TU・100 KB)。
+            # 10 件までにし、残りは理由ごとの件数にまとめる
             print(f'  {len(bad)} TU had parse errors; references only in those TUs may be missing:')
-            for (p, e), ns in bad.items():
+            items = list(bad.items())
+            for (p, e), ns in items[:10]:
                 print(f'    {p}  ({e})' + (f'  [{", ".join(ns)}]' if multi else ''))
+            if len(items) > 10:
+                why = collections.Counter(e for (p, e), ns in items[10:])
+                print(f'    ... {len(items) - 10} more (all in {self.rel(self.parts[0].path)}.tu.tsv): '
+                      + '; '.join(f'{n} x {e[:80]}' for e, n in why.most_common(3))
+                      + ('; ...' if len(why) > 3 else ''))
         changed, new, missing = self.freshness()
         if changed:
             print(f'  {len(changed)} source files changed after indexing. Indexed lines in them are re-located by their'

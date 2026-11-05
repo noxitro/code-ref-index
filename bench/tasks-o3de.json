@@ -1,0 +1,66 @@
+[
+  {
+    "id": "O1",
+    "kind": "同名メソッドが多い(Init は 289 種、語の一致 3,040 件)。受け手が同じ型でも、using で取り込んだ基底の Init は別の関数",
+    "prompt": "このフォルダは C++ のゲームエンジン O3DE(Open 3D Engine)のソースです。`AZ::RHI::BufferPool::Init(const BufferPoolDescriptor&)`(`Gems/Atom/RHI/Code/Include/Atom/RHI/BufferPool.h` で宣言)を呼び出している箇所をすべて挙げてください。他のクラスの `Init`(`AZ::RHI::DeviceBufferPool::Init`、`AZ::RPI::BufferPool::Init`、`BufferPool` が `using` で取り込んだ基底クラス `ResourcePool` の `Init` など)の呼び出しは含めません。定義・宣言も含めません。",
+    "note": "正解は rg と読解で作った(索引は使っていない)。BufferPool の語を含むファイルの Init 呼び出し 122 行と、BufferPool 型の変数名・メンバー名で Init を呼ぶ行をリポジトリ全体から集め、受け手の型を宣言で確かめた。除いたもの: RayTracingBufferPools.cpp の 11 行(受け手は RHI::Ptr<RHI::BufferPool> だが、Init(deviceMask, ラムダ) は using ResourcePool::Init の基底の Init)、DeviceRayTracingBufferPools.cpp・Vulkan/Metal の Device.cpp・Vulkan の NullDescriptorManager.cpp(DeviceBufferPool の派生)、RPI の BufferPool.cpp:34(RPI::BufferPool::Init)、ShaderResourceGroupPool.cpp:62・StreamingImagePool.cpp:57(別のプール)。後で索引の 7 件と突き合わせ、一致した",
+    "truth": [
+      "Gems/Atom/Feature/Common/Code/Source/AuxGeom/FixedShapeProcessor.cpp:63",
+      "Gems/Atom/Feature/Common/Code/Source/ReflectionProbe/ReflectionProbeFeatureProcessor.cpp:47",
+      "Gems/Atom/RPI/Code/Source/RPI.Public/Buffer/BufferPool.cpp:60",
+      "Gems/Atom/RPI/Code/Source/RPI.Public/Buffer/BufferSystem.cpp:155",
+      "Gems/DiffuseProbeGrid/Code/Source/Render/DiffuseProbeGridFeatureProcessor.cpp:61",
+      "Gems/DiffuseProbeGrid/Code/Source/Render/DiffuseProbeGridFeatureProcessor.cpp:85",
+      "Gems/OpenParticleSystem/Code/Source/Runtime/OpenParticleSystem/ParticleFeatureProcessor.cpp:193"
+    ]
+  },
+  {
+    "id": "O2",
+    "kind": "対照: 修飾名で rg でも絞れる。Windows でビルドされないファイル(Linux 用、PhysX4)や構成で無効になる #if の中を含む",
+    "prompt": "このフォルダは C++ のゲームエンジン O3DE(Open 3D Engine)のソースです。`AZ::DynamicModuleHandle::Create` を呼び出している箇所をすべて挙げてください(定義・宣言は含めません)。",
+    "note": "正解は rg で `DynamicModuleHandle::Create(` を引き、テストのフォルダと定義(DynamicModuleHandle_WinAPI/UnixLike/Unimplemented.cpp)を除いて、各行がコメントでないことを読んで確かめた。Windows でビルドされないもの: Platform/Linux の LibEVDevWrapper.cpp、PhysX4 の Module.cpp(PhysX5 と片方だけ)",
+    "truth": [
+      "Code/LauncherUnified/Launcher.cpp:571",
+      "Code/Framework/AzToolsFramework/AzToolsFramework/API/PythonLoader.cpp:50",
+      "Gems/PhysX/Core/PhysX5/Source/Module.cpp:86",
+      "Gems/PhysX/Core/PhysX4/Source/Module.cpp:85",
+      "Code/Framework/AzFramework/Platform/Windows/AzFramework/Windowing/NativeWindow_Windows.cpp:33",
+      "Gems/ImGui/Code/Source/ImGuiManager.cpp:135",
+      "Code/Framework/AzFramework/Platform/Windows/AzFramework/Input/Devices/Gamepad/InputDeviceGamepad_Windows.cpp:118",
+      "Code/Framework/AzFramework/Platform/Linux/AzFramework/Input/LibEVDevWrapper.cpp:16",
+      "Gems/SceneProcessing/Code/Source/SceneProcessingModule.cpp:97",
+      "Gems/SceneLoggingExample/Code/SceneLoggingExampleModule.cpp:35",
+      "Code/Framework/AzCore/AzCore/Module/ModuleManager.cpp:405",
+      "Code/Editor/GameEngine.cpp:329",
+      "Gems/Atom/RHI/Code/Source/RHI.Profiler/RenderDoc/RenderDocSystemComponent.cpp:41",
+      "Gems/Atom/RHI/Code/Source/RHI.Profiler/PIX/PIXSystemComponent.cpp:84",
+      "Code/Editor/main.cpp:24",
+      "Code/Framework/AzCore/Platform/Common/WinAPI/AzCore/Process/ProcessInfo_WinAPI.cpp:22",
+      "Code/Editor/Plugins/EditorAssetImporter/AssetImporterPlugin.cpp:71"
+    ]
+  },
+  {
+    "id": "O3",
+    "kind": "派生クラス(各バックエンドの BufferPool)の変数越しに呼ぶ基底のメンバー関数。Windows でビルドされない Metal のファイルを含む",
+    "prompt": "このフォルダは C++ のゲームエンジン O3DE(Open 3D Engine)のソースです。`AZ::RHI::DeviceBufferPool::Init(Device&, const BufferPoolDescriptor&)` を呼び出している箇所をすべて挙げてください。`DeviceBufferPool` を継承したクラス(各 RHI バックエンドの `BufferPool` など)の変数越しに呼んでいるものも、呼び出し先がこの関数なら含めます。`AZ::RHI::BufferPool::Init` など他の関数の呼び出しと、定義・宣言は含めません。",
+    "note": "正解は rg と読解で作った(索引は使っていない)。BufferPool 型の変数名で Init を呼ぶ行と、Init(*device/this/device, ...Desc) の形の呼び出しを Gems/Atom 全体から集め、受け手の型を宣言で確かめた。Vulkan と Metal の BufferPool は RHI::DeviceBufferPool を継承し、自前の Init を持たない。Metal の Device.cpp:439 は Windows ではビルドされない。Vulkan の Device.h:295 のテンプレート(objectPtr->Init(args...))は BufferPool で実体化されていない。後で索引の 15 件(Metal を除く)と突き合わせ、一致した",
+    "truth": [
+      "Gems/Atom/RHI/Code/Source/RHI/BufferPool.cpp:128",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:103",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:115",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:127",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:139",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:151",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:163",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:175",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:187",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:199",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:211",
+      "Gems/Atom/RHI/Code/Source/RHI/DeviceRayTracingBufferPools.cpp:223",
+      "Gems/Atom/RHI/Vulkan/Code/Source/RHI/Device.cpp:672",
+      "Gems/Atom/RHI/Vulkan/Code/Source/RHI/Device.cpp:683",
+      "Gems/Atom/RHI/Vulkan/Code/Source/RHI/NullDescriptorManager.cpp:323",
+      "Gems/Atom/RHI/Metal/Code/Source/RHI/Device.cpp:439"
+    ]
+  }
+]

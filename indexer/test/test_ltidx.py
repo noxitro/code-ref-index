@@ -112,6 +112,18 @@ class LtidxTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertTrue(self.has('Run', 'call', 'a.cpp:9:26'))
 
+    def test_deep_template_instantiation(self):
+        # 深いテンプレートの実体化は、作業用のスレッドの既定(1 MB)のスタックを使い切って ltidx ごと落ちていた
+        # (STATUS_STACK_OVERFLOW。O3DE で起きた)。並列で動かしても、この TU が通ること
+        self.write('deep.cpp', 'template <int N> struct Deep { static int Get() { return Deep<N - 1>::Get() + 1; } };\n'
+                               'template <> struct Deep<0> { static int Get() { return 0; } };\n'
+                               'void Run();\n'
+                               'int Main() { Run(); return Deep<900>::Get(); }\n', [])
+        rc, err = self.run_ltidx('-j', '2')
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.tus()['deep.cpp'][1], '1')
+        self.assertTrue(self.has('Run', 'call', 'deep.cpp:4:14'))
+
     def test_non_cpp_inputs_are_skipped(self):
         # CMake の compile_commands.json には、アセンブリとリソースも載る。解析すると「失敗した TU」になる
         self.write('a.cpp', 'void Run() {}\n', [])

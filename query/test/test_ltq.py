@@ -348,6 +348,20 @@ class LtqTest(unittest.TestCase):
         self.assertIn('inside comments -> not code; do not report these: 71', one_pass)
         self.assertRegex(one_pass, r'inside inactive #if[^\n]*: 70')
 
+    def test_many_failed_tus_are_summarized(self):
+        # 失敗した TU が多いと、並べるだけでクライアントの出力の上限を超える(O3DE で 180 TU・100 KB)。10 件まで並べ、残りは理由ごとの件数
+        self.index('index', self.COMMON, [self.COMMENT])
+        tu = os.path.join(self.root, '.index', 'index.tsv.tu.tsv')
+        with open(tu, 'a', encoding='utf-8', newline='\n') as f:
+            for i in range(12):
+                why = 'x.h file not found' if i % 3 else "type '__m128' is not a structure"
+                f.write(f'{os.path.join(self.root, "src", f"bad{i}.cpp")}\t0\t1\t0.1\t0\t{why}\n')
+        os.utime(tu, (self.t0, self.t0))
+        out = self.ltq('refs', 'Run')
+        self.assertIn('12 TU had parse errors', out)
+        self.assertEqual(len([l for l in out.splitlines() if l.startswith('    src/bad')]), 10)
+        self.assertIn('... 2 more (all in .index/index.tsv.tu.tsv)', out)
+
     def test_root_is_found_from_a_subfolder(self):
         # --root を省くと、カレントから親へさかのぼって .index のあるフォルダを使う
         self.index('index', self.COMMON, [self.COMMENT])

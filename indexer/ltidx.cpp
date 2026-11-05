@@ -35,6 +35,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/thread.h"
 #include "llvm/Support/xxhash.h"
 
 #include <algorithm>
@@ -990,8 +991,11 @@ int main(int argc, const char **argv) {
                    << llvm::sys::path::filename(Todo[I]) << "\n";
     }
   };
-  std::vector<std::thread> Ts;
-  for (unsigned J = 0; J < std::max(1u, (unsigned)Jobs); ++J) Ts.emplace_back(Worker);
+  // 深いテンプレートの実体化で、clang の解析は 1 MB(Windows のスレッドの既定)のスタックを使い切る(O3DE で
+  // STATUS_STACK_OVERFLOW になった)。clang 本体の 8 MB より余裕を持たせる
+  constexpr unsigned WorkerStack = 16u << 20;
+  std::vector<llvm::thread> Ts;
+  for (unsigned J = 0; J < std::max(1u, (unsigned)Jobs); ++J) Ts.emplace_back(std::optional<unsigned>(WorkerStack), Worker);
   for (auto &T : Ts) T.join();
 
   for (auto *S : {&OutS, &TuS, &SkipS, &DepS}) {
