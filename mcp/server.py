@@ -22,8 +22,9 @@ import autoupdate  # noqa: E402
 
 VERSION = '0.4.0'
 PROTOCOL = '2025-06-18'
-# 結果の大きさの上限の既定。Copilot CLI(1.0.105)は 20,480 バイト(COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES)を超える
-# ツールの結果をモデルに渡さず、ファイルに退かせて先頭だけを見せる【実測: 同梱の app.js と、コードベース C での計測】。少し下回らせる
+# 結果の大きさの上限の既定。Copilot CLI は 20,480 バイト(COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES)を超える
+# ツールの結果をモデルに渡さず、ファイルに退かせて先頭だけを見せる【実測: 1.0.18 の app.js。1.0.105 は native に移り、
+# 計測で 21.2 KB 以上が退かされ、18,000 バイト以下は退かされなかった】。少し下回らせる
 MAX_BYTES = 18000
 
 INSTRUCTIONS = (

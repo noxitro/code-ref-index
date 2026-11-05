@@ -30,7 +30,7 @@ code-ref-index-mcp.cmd [--root <ソースのルート>] [--index <索引.tsv>] [
 - 環境変数 `CRI_ROOT` と `CRI_INDEX` でも指定できます
 - `--auto-update-wait`(既定 10 秒)と `--no-auto-update` は、下の「索引の自動更新」を参照してください。環境変数 `CRI_AUTO_UPDATE_WAIT`・`CRI_AUTO_UPDATE=0` でも指定できます
 - `--max-output-bytes`(既定 18,000)は、結果の大きさの上限です。超えると、`refs` は短い形(`ltq refs --compact`)で出し直し、それでも超えれば末尾を切って、そう書き添えます。環境変数 `CRI_MAX_OUTPUT_BYTES` でも指定でき、0 で切りません
-  - Copilot CLI(1.0.105)は、ツールの結果が 20,480 バイト(環境変数 `COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES`)を超えると、中身をモデルに渡さず、ファイルに退かせて先頭だけを見せます。大きなコードベースでよくある名前を引くと 75〜110 KB になり、答えの要の部分が届かなかったので、上限を設けました(`../docs/design.md` の「測り直し」)
+  - Copilot CLI は、ツールの結果が上限(既定は 20,480 バイト、環境変数 `COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES`)を超えると、中身をモデルに渡さず、ファイルに退かせて先頭だけを見せます。大きなコードベースでよくある名前を引くと 75〜110 KB になり、答えの要の部分が届かなかったので、上限を設けました(`../docs/design.md` の「測り直し」)
 
 ## 索引の自動更新
 
