@@ -13,6 +13,7 @@
 - G: F に使い方の指示(`mcp-instructions.md`)を足したもの
 - H: G の索引の自動更新を止めたもの(`--no-auto-update`)。コードを変えた後の問題(U1・U2)で、自動更新の効き目を G と比べます
 - P: このリポジトリをプラグインとして読ませたもの(`--plugin-dir`)。MCP サーバーと使い方の rule はプラグインから渡り、作業フォルダには指示のファイルも `.mcp.json` も置きません。G と比べて、チームで配る形でも同じ効き目かを見ます(v9。`../docs/design.md` の「プラグインとしての配布」)
+- S: Serena(clangd)の MCP だけ(指示なし)。Y: S に、Serena を先に使う指示(`serena-instructions.md`)を足したもの。`-Serena`(または `CRI_BENCH_SERENA`)に Serena を入れたフォルダ(`bin\serena.exe` と設定の `home\`)を渡します。clangd が読むルートの `compile_commands.json` は実行の間だけ置き、Serena と clangd の索引(`.serena`・`.cache`)は消さずに使い回すので、先に `serena project index <写し> --ls cpp` で作っておきます(v10。`../docs/design.md` の「Serena との比較」)
 
 結果と考察は `../docs/design.md` にあります。問題は 2 つのコードベースで用意しています。
 

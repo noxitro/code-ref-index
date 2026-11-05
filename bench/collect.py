@@ -56,7 +56,7 @@ for line in open(os.path.join(bench, "runs", "index.jsonl"), encoding="utf-8-sig
     rows.append({
         "name": r["name"], "round": r.get("round", "v1"), "task": r["task"], "cond": r["cond"], "sec": r["sec"],
         "model_calls": calls, "tool_calls": sum(tools.values()), "view": tools["view"], "lsp": tools["lsp"],
-        "shell": tools["powershell"], "mcp": sum(n for t, n in tools.items() if t.startswith("code-ref-index")),
+        "shell": tools["powershell"], "mcp": sum(n for t, n in tools.items() if t.startswith(("code-ref-index", "serena"))),
         "search": tools["rg"] + tools["grep"] + tools["glob"], "tool_result_chars": result_chars,
         "input_tokens": inp, "cache_read": cache, "uncached_input": inp - cache, "output_tokens": out,
         "credits": round(credits, 4), "tp": len(got & truth), "fp": len(got - truth), "fn": len(truth - got),

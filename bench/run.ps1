@@ -1,12 +1,14 @@
 ﻿# 条件 A(rg のみ)/ B(LSP)/ C(索引)/ D(LSP + 指示)/ E(ltq CLI)/ F(MCP)/ G(MCP + 指示)/
 # H(G の索引の自動更新を止めたもの)/ P(このリポジトリをプラグインとして読ませる。MCP サーバーと使い方の rule は
-# プラグインから。指示のファイルと .mcp.json は置かない)で Copilot CLI に 1 問を解かせ、セッションを記録する。
+# プラグインから。指示のファイルと .mcp.json は置かない)/ S(Serena の MCP。clangd を使う。指示なし)/
+# Y(S + Serena を先に使う指示 serena-instructions.md)で
+# Copilot CLI に 1 問を解かせ、セッションを記録する。
 # 問題に edit があれば、実行の前に作業フォルダのソースを書き換え、実行の後に中身と更新日時を元に戻す
 # (コードを変えた後の問い合わせ。索引は変える前のソースで作ったもの)。
 # Copilot に渡すのは読み取り専用のツール(view / rg / grep / glob / lsp / MCP)だけ。書き込みは渡さない。
 # シェルは条件 E だけで渡し、実行を許すのは ltq コマンドだけにする。
 param(
-    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'P')][string]$Cond,
+    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'P', 'S', 'Y')][string]$Cond,
     [Parameter(Mandatory)][string]$TaskId,
     [int]$Rep = 1,
     [string]$Model = 'gpt-6-luna',
@@ -17,7 +19,8 @@ param(
     [string]$Cdb = '',              # 条件 F・G・H の自動更新が使う compile_commands.json のフォルダ(既定 <作業フォルダ>\.cdb)
     [string]$Clangd = 'clangd',     # 条件 B・D の clangd
     [string]$Tasks = 'tasks.json',          # 問題と正解(bench 配下。公開しない別のコードベースの問題は local\tasks-<名前>.json に置く)
-    [string]$Format = 'answer-format.md'    # 回答の書式(bench 配下。local\ に置いたものも指定できる)
+    [string]$Format = 'answer-format.md',   # 回答の書式(bench 配下。local\ に置いたものも指定できる)
+    [string]$Serena = $env:CRI_BENCH_SERENA # 条件 S: Serena を入れたフォルダ(bin\serena.exe と、設定の home\ がある)
 )
 $ErrorActionPreference = 'Stop'
 $bench = $PSScriptRoot
@@ -37,8 +40,25 @@ function Write-LspJson {
 }
 
 # 条件ごとの設定を作業フォルダに置く(他の条件の物は消す)
-foreach ($p in "$ws\.github", "$ws\.index", "$ws\.mcp.json") { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+foreach ($p in "$ws\.github", "$ws\.index", "$ws\.mcp.json", "$ws\compile_commands.json") { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
 switch ($Cond) {
+    { $_ -in 'S', 'Y' } {
+        # Serena(既定の REPL の形)を作業フォルダの .mcp.json に登録する。clangd はルートの compile_commands.json を読むので、
+        # 実行の間だけ置く(写しの指紋に入るので、実行の後に消す)。Serena と clangd の索引(.serena・.cache)は消さずに使い回す
+        if (-not $Serena -or -not (Test-Path "$Serena\bin\serena.exe")) { throw 'set -Serena (or CRI_BENCH_SERENA)' }
+        Copy-Item "$ws\.cdb\compile_commands.json" "$ws\compile_commands.json"
+        if ($Cond -eq 'Y') {
+            New-Item -ItemType Directory "$ws\.github" | Out-Null
+            Copy-Item "$bench\serena-instructions.md" "$ws\.github\copilot-instructions.md"
+        }
+        $sargs = @('start-mcp-server', '--project', (Resolve-Path $ws).Path, '--context', 'copilot-cli',
+            '--enable-web-dashboard', 'False', '--open-web-dashboard', 'False', '--log-level', 'WARNING')
+        @{ mcpServers = @{ serena = @{ type = 'local'; command = "$Serena\bin\serena.exe"; args = $sargs; tools = @('*')
+                    env = @{ SERENA_HOME = "$Serena\home" } } } } |
+            ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$ws\.mcp.json"
+        $tools = 'view', 'rg', 'grep', 'glob', 'serena'
+        $allow = $tools
+    }
     'B' {
         New-Item -ItemType Directory "$ws\.github" | Out-Null
         Write-LspJson
@@ -129,6 +149,7 @@ try {
     while ((Test-Path "$ws\.index\update.lock") -and (Get-Date) -lt $deadline) {
         try { Remove-Item "$ws\.index\update.lock" -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 }
     }
+    if ($Cond -in 'S', 'Y') { Remove-Item "$ws\compile_commands.json" -ErrorAction SilentlyContinue }
     [array]::Reverse($saved)  # 同じファイルを何度も書き換えたときは、最初の中身に戻す
     foreach ($x in $saved) {
         [IO.File]::WriteAllBytes($x[0], $x[1])
