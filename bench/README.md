@@ -67,6 +67,9 @@ python -I autoupdate_bench.py --workspace <写し> --index <索引.tsv> --reps 5
 | Nox(2026-11-03 の作業ツリー。未コミットの変更を含む) | `E:\dev\bench-data\cxxref\nox-20261103` | `d15d190d64f53034e5312f6d669708b9a3b6a44b5650cd43687759b8d6598e6a`(1,764 ファイル) |
 | コードベース B | `E:\dev\bench-data\cxxref\b` | `58c865fb54c9a4c1d3a01cd500bba354c32c0b2b8371f7966becddcc02f3d805`(1,667 ファイル) |
 | コードベース C(X86 だけを、アサーションありの Release で構成) | `E:\dev\bench-data\cxxref\` の下(フォルダ名は伏せます) | `bbacd634c6ad35de17a2f16becc3f5822bfbf4c206ad9a04359a035636338bb1`(10,338 ファイル) |
+| O3DE 2605.0(`3db6943`。Ninja・profile・unity build なし・テストなしで構成。`build/` は `.snapshot-exclude` で指紋から除く) | `E:\dev\bench-data\cxxref\o3de-src` | `d26eea97d767cecd8a24c030e1cc8833f1ef269b8e03ef0d210cb134ac50254a`(29,950 ファイル) |
+
+O3DE の問題(O1〜O3)は公開しています(`tasks-o3de.json`・`answer-format-o3de.md`)。O3DE は誰でも同じ版を取ってこられるので、写しの作り方を `../docs/design.md` の「大規模な公開コード」に書きました。正解は索引を使わずに rg と読解で作り、判定の理由を各問の `note` に残しています。
 
 写しを別の場所に移したときは、`snapshot.py rebase <写し>\.cdb <元の場所> <新しい場所>` で `compile_commands.json` の中のパスを書き換えます。
 
