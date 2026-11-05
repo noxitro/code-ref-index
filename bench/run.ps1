@@ -1,11 +1,12 @@
 ﻿# 条件 A(rg のみ)/ B(LSP)/ C(索引)/ D(LSP + 指示)/ E(ltq CLI)/ F(MCP)/ G(MCP + 指示)/
-# H(G の索引の自動更新を止めたもの)で Copilot CLI に 1 問を解かせ、セッションを記録する。
+# H(G の索引の自動更新を止めたもの)/ P(このリポジトリをプラグインとして読ませる。MCP サーバーと使い方の rule は
+# プラグインから。指示のファイルと .mcp.json は置かない)で Copilot CLI に 1 問を解かせ、セッションを記録する。
 # 問題に edit があれば、実行の前に作業フォルダのソースを書き換え、実行の後に中身と更新日時を元に戻す
 # (コードを変えた後の問い合わせ。索引は変える前のソースで作ったもの)。
 # Copilot に渡すのは読み取り専用のツール(view / rg / grep / glob / lsp / MCP)だけ。書き込みは渡さない。
 # シェルは条件 E だけで渡し、実行を許すのは ltq コマンドだけにする。
 param(
-    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H')][string]$Cond,
+    [Parameter(Mandatory)][ValidateSet('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'P')][string]$Cond,
     [Parameter(Mandatory)][string]$TaskId,
     [int]$Rep = 1,
     [string]$Model = 'gpt-6-luna',
@@ -21,7 +22,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $bench = $PSScriptRoot
 if (-not $Workspace -or -not (Test-Path $Workspace)) { throw 'set -Workspace (or CRI_BENCH_WORKSPACE)' }
-if ($Cond -in 'C', 'E', 'F', 'G', 'H' -and (-not $IndexDir -or -not (Test-Path "$IndexDir\$Index"))) {
+if ($Cond -in 'C', 'E', 'F', 'G', 'H', 'P' -and (-not $IndexDir -or -not (Test-Path "$IndexDir\$Index"))) {
     throw "index not found: $IndexDir\$Index (set -IndexDir or CRI_BENCH_INDEXDIR)"
 }
 $ws = $Workspace
@@ -65,7 +66,7 @@ switch ($Cond) {
         $tools = 'view', 'rg', 'grep', 'glob', 'powershell'
         $allow = 'view', 'rg', 'grep', 'glob', 'shell(ltq)', 'shell(ltq:*)'
     }
-    { $_ -in 'F', 'G', 'H' } {
+    { $_ -in 'F', 'G', 'H', 'P' } {
         # 段階 3 の MCP。作業フォルダの .mcp.json に登録する(F は指示なし、G・H は指示あり)。シェルは渡さない
         New-Item -ItemType Directory "$ws\.github", "$ws\.index" | Out-Null
         if ($Cond -in 'G', 'H') { Copy-Item "$bench\mcp-instructions.md" "$ws\.github\copilot-instructions.md" }
@@ -81,12 +82,16 @@ switch ($Cond) {
         Get-FileHash "$ws\.index\index.tsv" | Out-Null
         $server = (Resolve-Path (Join-Path $bench '..\mcp\server.py')).Path
         $serverArgs = @('-I', $server) + $(if ($Cond -eq 'H') { @('--no-auto-update') } else { @() })
-        @{ mcpServers = @{ 'code-ref-index' = @{ type = 'local'; command = 'python'; args = $serverArgs; tools = @('*') } } } |
-            ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$ws\.mcp.json"
+        if ($Cond -ne 'P') {
+            @{ mcpServers = @{ 'code-ref-index' = @{ type = 'local'; command = 'python'; args = $serverArgs; tools = @('*') } } } |
+                ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$ws\.mcp.json"
+        }
         $tools = 'view', 'rg', 'grep', 'glob', 'code-ref-index'
         $allow = $tools
     }
 }
+# P はこのリポジトリ(plugin.json のあるルート)を --plugin-dir で読ませる。MCP サーバーは mcp.json の ${PLUGIN_ROOT} から起動される
+$pluginArgs = if ($Cond -eq 'P') { @('--plugin-dir', (Resolve-Path (Join-Path $bench '..')).Path) } else { @() }
 $oldPath = $env:PATH
 if ($Cond -eq 'E') { $env:PATH = "$ltq;$env:PATH" }
 
@@ -113,7 +118,7 @@ New-Item -ItemType Directory "$bench\runs" -Force | Out-Null
 $t0 = Get-Date
 Push-Location $ws
 try {
-    copilot -p $prompt --model $Model --trust-folder --available-tools @tools --allow-tool @allow -s `
+    copilot -p $prompt --model $Model --trust-folder --available-tools @tools --allow-tool @allow -s @pluginArgs `
         --share "$bench\runs\$name.md" --log-level error *> "$bench\runs\$name.out.txt"
     $code = $LASTEXITCODE
 } finally {

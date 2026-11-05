@@ -13,6 +13,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'query'))
@@ -20,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I ではス�
 import ltq  # noqa: E402
 import autoupdate  # noqa: E402
 
-VERSION = '0.4.0'
+VERSION = '0.5.0'
 PROTOCOL = '2025-06-18'
 # 結果の大きさの上限の既定。Copilot CLI は 20,480 バイト(COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES)を超える
 # ツールの結果をモデルに渡さず、ファイルに退かせて先頭だけを見せる【実測: 1.0.18 の app.js。1.0.105 は native に移り、
@@ -53,6 +54,9 @@ TOOLS = [
                 'limit': {'type': 'integer', 'description': 'Max lines per section (default 200)'},
                 'exclude': {'type': 'array', 'items': {'type': 'string'},
                             'description': 'Directory names or root-relative path prefixes to skip in the text search'},
+                'root': {'type': 'string',
+                         'description': 'Absolute path of the folder you are working in. Pass it: the server may run '
+                                        'outside your workspace (for example when installed as a plugin)'},
             },
             'required': ['name'],
         },
@@ -70,12 +74,44 @@ TOOLS = [
             'properties': {
                 'locations': {'type': 'array', 'items': {'type': 'string'},
                               'description': 'Root-relative locations such as "src/a.cpp:42" or "src/a.cpp:42:7"'},
+                'root': {'type': 'string',
+                         'description': 'Absolute path of the folder you are working in. Pass it: the server may run '
+                                        'outside your workspace (for example when installed as a plugin)'},
             },
             'required': ['locations'],
         },
         'annotations': {'readOnlyHint': True, 'openWorldHint': False},
     },
 ]
+
+
+def session_cwd():
+    """Copilot CLI のセッションの作業フォルダ。COPILOT_AGENT_SESSION_ID のセッションの記録
+    (<COPILOT_HOME か ~/.copilot>/session-state/<id>/workspace.yaml の cwd)から読む。公開の仕様ではない
+    【実測: Copilot CLI 1.0.105。セッションの始めに書かれ、MCP サーバーの起動より先にある】。読めなければ None。"""
+    sid = os.environ.get('COPILOT_AGENT_SESSION_ID', '')
+    if not re.fullmatch(r'[0-9A-Za-z-]+', sid):
+        return None
+    home = os.environ.get('COPILOT_HOME') or os.path.join(os.path.expanduser('~'), '.copilot')
+    try:
+        with open(os.path.join(home, 'session-state', sid, 'workspace.yaml'), encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('cwd:'):
+                    v = line[4:].strip().strip('\'"')
+                    return v if os.path.isdir(v) else None
+    except OSError:
+        pass
+    return None
+
+
+def workspace():
+    """ツールの引数で root が渡されなかったときの起点。プラグインとして起動されると、作業フォルダはプラグインの場所
+    (PLUGIN_ROOT)になり、MCP の roots も空なので【実測: Copilot CLI 1.0.105】、セッションの記録から取る。"""
+    cwd = os.getcwd()
+    plugin = os.environ.get('PLUGIN_ROOT')
+    if plugin and os.path.normcase(os.path.abspath(plugin)) == os.path.normcase(cwd):
+        return session_cwd() or cwd
+    return cwd
 
 
 class Config:
@@ -85,10 +121,10 @@ class Config:
         self.wait = wait  # 自動更新で待つ秒数。None なら自動更新しない
         self.max_bytes = max_bytes  # 結果の大きさの上限(0 なら切らない)
 
-    def resolve(self):
-        """(ルート, 注記)。--root が無ければ、カレントフォルダから親へさかのぼって索引のあるフォルダを探す。
-        呼ばれるたびに探すので、サーバーの起動後に作った索引も拾う。"""
-        cwd = os.getcwd()
+    def resolve(self, start=None):
+        """(ルート, 注記)。--root が無ければ、start(ツールの引数の root)か作業フォルダ(workspace())から
+        親へさかのぼって索引のあるフォルダを探す。呼ばれるたびに探すので、サーバーの起動後に作った索引も拾う。"""
+        cwd = os.path.abspath(start) if start else workspace()
         root = self.fixed or (None if self.index else ltq.find_root(cwd)) or cwd
         note = ''
         if not self.fixed and os.path.normcase(root) != os.path.normcase(cwd):
@@ -96,9 +132,9 @@ class Config:
         return root, note
 
 
-def run_ltq(cfg, args):
+def run_ltq(cfg, args, start=None):
     idx = None
-    root, note = cfg.resolve()
+    root, note = cfg.resolve(start)
     base = ['--root', root] + (['--index', cfg.index] if cfg.index else [])
     paths = [cfg.index] if cfg.index else ltq.find_indexes(root)
     if paths and all(os.path.exists(p) for p in paths):
@@ -106,6 +142,14 @@ def run_ltq(cfg, args):
         if cfg.wait is not None:
             idx, up = autoupdate.refresh(idx, paths, root, cfg.wait)
             note += up
+    elif not cfg.index:
+        # 索引の無いリポジトリ。プラグインとして入れたときは scripts が見つけにくいので、作り方を絶対パスで添える
+        index_project = os.path.join(autoupdate.SCRIPTS, 'index-project.bat')
+        note += ('No cxxref index in this repository; search with rg as usual. To build one (it takes minutes; ask the '
+                 f'user first): "{index_project}" -Root "{root}"'
+                 + ('' if autoupdate.find_ltidx() else
+                    f' (first run "{os.path.join(autoupdate.SCRIPTS, "get-ltidx.bat")}" once to get ltidx.exe)')
+                 + '\n')
 
     def run(extra):
         out = io.StringIO()
@@ -144,7 +188,7 @@ def call_tool(cfg, name, a):
         args = ['check'] + [str(x) for x in locs]
     else:
         raise KeyError(name)
-    return run_ltq(cfg, args)
+    return run_ltq(cfg, args, a.get('root') or None)
 
 
 def handle(msg, cfg):

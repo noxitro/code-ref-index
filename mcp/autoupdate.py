@@ -16,9 +16,26 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-LTIDX = os.environ.get('LTIDX') or os.path.join(HERE, '..', 'indexer', 'build', 'ltidx.exe')
-MAKE_CDB = os.path.join(HERE, '..', 'scripts', 'make-cdb.ps1')
+SCRIPTS = os.path.normpath(os.path.join(HERE, '..', 'scripts'))
+MAKE_CDB = os.path.join(SCRIPTS, 'make-cdb.ps1')
 RECIPE = '.recipe.json'
+
+
+def find_ltidx():
+    """ltidx.exe の場所。環境変数 LTIDX(あればそのまま)、このリポジトリでビルドしたもの(indexer\\build)、
+    配布物を取ってきたもの(scripts\\get-ltidx.ps1 が %LOCALAPPDATA%\\cxxref\\ltidx に置く)の順。無ければ None。
+    プラグインとして入れた写しにはビルドしたものが無いので、配布物を使う。"""
+    if os.environ.get('LTIDX'):
+        return os.environ['LTIDX']
+    for p in (os.path.join(HERE, '..', 'indexer', 'build', 'ltidx.exe'),
+              os.path.join(os.environ.get('LOCALAPPDATA', ''), 'cxxref', 'ltidx', 'ltidx.exe')):
+        if os.path.exists(p):
+            return os.path.normpath(p)
+    return None
+
+
+def no_ltidx():
+    return f'ltidx.exe not found; run {os.path.join(SCRIPTS, "get-ltidx.bat")} once (or build it with indexer\\build.bat)'
 
 
 def recipe_of(index):
@@ -86,7 +103,7 @@ def refresh(idx, paths, root, wait):
         return idx, ''
     if any(recipe_of(p) is None for p in paths):
         return idx, ('auto-update: off for this index (no .recipe.json). Rebuild it once with '
-                     'scripts\\index-project.bat to turn it on.\n')
+                     f'{os.path.join(SCRIPTS, "index-project.bat")} to turn it on.\n')
     d = os.path.dirname(os.path.abspath(paths[0]))
     n = len(changed) + len(new) + len(missing)
     asked = time.time()
@@ -125,7 +142,10 @@ def run_recipe(rec, full, log):
         if rc != 0:
             return f'make-cdb exit {rc}'
     out = rec['out']
-    args = [LTIDX, '-p', rec['cdb'], '-root', rec['root'], '-o', out, '-j', str(rec.get('jobs') or 1)]
+    ltidx = find_ltidx()
+    if not ltidx or not os.path.exists(ltidx):
+        return no_ltidx()
+    args = [ltidx, '-p', rec['cdb'], '-root', rec['root'], '-o', out, '-j', str(rec.get('jobs') or 1)]
     if os.path.exists(out + '.deps.tsv'):
         args.append('-update')
     rc = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=log, stderr=log).returncode

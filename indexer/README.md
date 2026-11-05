@@ -67,6 +67,7 @@ ltidx.exe -p <compile_commands.json のあるフォルダ> -root <索引に含�
 - `-delayed` を付けないときは、遅延テンプレート解析を止めます。clang-cl 形式(`cl.exe`・`clang-cl`・`--driver-mode=cl`)の引数には `/Zc:twoPhase` を、gcc 形式(`g++`・`clang++` など)の引数には `-fno-delayed-template-parsing` を足します(MSVC 向けでは、gcc 形式でも既定で遅延します)。これで、一度も実体化されないテンプレート本体の非依存呼び出しも索引に載ります
 - 規格は、TU の引数(`/std:`・`-std=`)に従います。C++03 以前の書き方(`register`・`throw()`・`> >` など)も読めます。新しい規格で禁止された書き方(波かっこの中の縮小変換、C++17 での `throw(X)` など)や、今の標準ライブラリに無いもの(`std::bind1st`、C++17 での `std::auto_ptr`)はエラーに数えますが、その TU の行は索引に残ります
   - Windows では、gcc 形式の引数でも標準ライブラリは MSVC のもの(C++14 以降が前提)を読みます。`-std=c++98` などで標準ライブラリを使う TU は失敗し、行が減ります
+- 組み込みヘッダー(`<stddef.h>` など)は、`ltidx.exe` の隣に `lib\clang\<版>\include` があればそれを、無ければビルドした LLVM の `lib\clang\<版>` を使います(`-resource-dir` で指定もできます)。配布物(`scripts\get-ltidx.bat` が取ってくるもの)は前者の形で、LLVM 無しで動きます。どちらにも無ければ、解析に進まずに止まります
 - `-no-inst` は比較用です。テンプレートの暗黙の実体化を索引しません
 - PCH の指定(`/Yu` `/Yc` `/Fp`)は外して解析します
 - 警告をエラーにする指定(`/WX` `-Werror` `-Werror=…`)は外して解析します。cl に無い clang の警告(`override` の付け忘れなど)で TU が失敗扱いになるのを防ぎます

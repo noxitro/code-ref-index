@@ -268,6 +268,29 @@ A・F は v6、G は Nox・B が v7、C が v8、R・U は v6 の値。v7 は下
 - ビルドで生成されるヘッダー(TableGen の `.inc` など)は、構成だけでは無い。生成のターゲットだけを先にビルドした(4 並列・最低優先度で 95 秒)。無いと 2,350 TU のうち 172 TU が失敗した
 - CMake の `compile_commands.json` に載るアセンブリ・リソース(`.asm`・`.rc`)を ltidx が解析して「失敗した TU」に数えていた(5 件)。解析しないようにした
 
+## プラグインとしての配布(v0.5.0、2026-11-05)
+
+チームで使うために、このリポジトリを Copilot CLI のプラグイン(Agent Plugins 1.0)にした。チームのマーケットプレイスには写しを置かず、`{"source": "github", "repo": "noxitro/cxxref", "ref": "v<版>"}` で参照させる【公式: GitHub Copilot CLI plugin reference】。
+
+- 中身: ルートの `plugin.json`・`mcp.json`(`python -I ${PLUGIN_ROOT}/mcp/server.py`)と、`com.github.copilot/rules/cxxref.mdc`(使い方の指示)。skill にしなかったのは、計測で効いたのが常に読まれる指示(G)だったため。rule は指示として毎回読まれる【実測: `copilot instruction list` の Plugin instructions に出る】
+  - rule は `.mdc`(前置きに `description` が必須、`alwaysApply`・`globs`)。`.md` は読まれなかった【実測: 1.0.105。本体の component_discovery の文字列で形式を確かめた】
+  - 条件は `globs`(対象ファイル)だけで、索引の有無では効かせ分けられない。そのため rule は「索引が無いと返ってきたら、ふだんどおり探す」と書き、索引を使うリポジトリだけで有効にする運用(リポジトリの `.github/copilot/settings.json` の `enabledPlugins`)を勧める
+- **プラグインの MCP サーバーの作業フォルダはプラグインの場所になる**。クライアントは roots の機能を名乗らず、`roots/list` は空、作業フォルダを示す環境変数も無い。`mcp.json` の `cwd` に `${workspaceFolder}` を書いても変わらない【実測: 1.0.105。調べ用のサーバーで初期化の要求と環境変数を記録した】
+  - 最初の計測では、サーバーがプラグインの場所の `.index` を探して「索引が無い」と答えた(1 回)
+  - 対処: ツールの引数 `root` を足し、rule で作業中のフォルダを渡させる。渡されなければ、Copilot CLI のセッションの記録(`session-state/<COPILOT_AGENT_SESSION_ID>/workspace.yaml` の `cwd`。セッションの始めに書かれる)から取る。この記録は公開の仕様ではない
+- ltidx は、リリースの配布物(ltidx.exe と clang の組み込みヘッダー、zip で 15 MB)を `scripts/get-ltidx.ps1` が `%LOCALAPPDATA%\cxxref\ltidx` に置く。ltidx.exe が使う DLL は Windows の標準のものだけ(CRT は静的)。組み込みヘッダーは、ltidx.exe の隣の `lib\clang\<版>` を先に探す
+- リポジトリの設定(`extraKnownMarketplaces` と `enabledPlugins`)だけで、セッションの始めにプラグインが自動で入った(GitHub のマーケットプレイス)。ローカルのフォルダのマーケットプレイスを指したときは入らなかった【実測: 1.0.105】
+- 計測(v9、条件 P: `--plugin-dir` でこのリポジトリを読ませ、指示のファイルと `.mcp.json` は置かない。Nox の 4 問 × 5 回)【実測】
+
+| 条件 | 正答 | 入力トークン | credits | モデル呼び出し | 秒 |
+|---|---|---|---|---|---|
+| A(rg のみ、v6) | 9/20 | 40,369 | 0.258 | 4.2 | 25 |
+| G(指示のファイル + MCP、v7) | 20/20 | 19,270 | 0.122 | 2.9 | 17 |
+| P(プラグイン、v9) | 20/20 | 21,323 | 0.150 | 3.0 | 17 |
+
+  - 20 回すべてで MCP を使い、`root` を渡した。正答は G と同じで、入力は G より 11%、credits は 23% 多い(A よりは 42% 少ない)。G の計測はサーバー 0.4.0 で、rule には `root` の 1 行を足しているので、差のすべてがプラグインによるものとは言えない
+  - 測ったのは Nox の 4 問だけ(コードベース B・C ではプラグインの条件を測っていない)。計測の credits は 3.0
+
 ## 採らなかった案
 
 | 案 | 理由 |

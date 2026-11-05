@@ -838,6 +838,18 @@ bool replaceAll(llvm::ArrayRef<std::string> Outs) {
 
 int main(int argc, const char **argv) {
   cl::ParseCommandLineOptions(argc, argv, "libtooling 版の C++ 参照索引(段階 1)\n");
+  // 配布物(LLVM 無しで使う)は、組み込みヘッダーを ltidx.exe の隣の lib\clang\<版> に置く。あればビルドした LLVM の場所より優先する
+  if (!ResourceDir.getNumOccurrences()) {
+    llvm::SmallString<256> Bundled(llvm::sys::path::parent_path(
+        llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main))));
+    llvm::sys::path::append(Bundled, "lib", "clang", llvm::sys::path::filename(LTIDX_RESOURCE_DIR));
+    if (llvm::sys::fs::is_directory(Bundled + "/include")) ResourceDir = std::string(Bundled);
+  }
+  if (!llvm::sys::fs::is_directory(ResourceDir + "/include")) {
+    llvm::errs() << "clang の組み込みヘッダーがありません: " << ResourceDir
+                 << "/include(-resource-dir で指定するか、ltidx.exe の隣の lib\\clang\\<版> に置いてください)\n";
+    return 2;
+  }
   llvm::sys::TimePoint<> Started = std::chrono::system_clock::now();
   std::string Err;
   auto Cdb = tooling::CompilationDatabase::loadFromDirectory(CdbPath, Err);

@@ -103,6 +103,9 @@ class ServerTest(unittest.TestCase):
         r = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run'}})['result']
         self.assertTrue(r['isError'])
         self.assertIn('index not found', r['content'][0]['text'])
+        # 作り方を、このサーバーの隣の scripts の絶対パスで添える(プラグインとして入れたときに場所が分かるように)
+        scripts = os.path.normpath(os.path.join(os.path.dirname(SERVER), '..', 'scripts'))
+        self.assertIn(f'"{os.path.join(scripts, "index-project.bat")}" -Root "{self.root}"', r['content'][0]['text'])
 
     def test_large_result_is_shortened(self):
         # クライアントの上限(Copilot CLI は 20,480 バイト)を超える結果は、短い形にし、それでも超えれば末尾を切る
@@ -114,6 +117,47 @@ class ServerTest(unittest.TestCase):
         self.assertLessEqual(len(text.encode('utf-8')), 400)
         self.assertTrue(text.startswith('index: .index/index.tsv'))  # 先頭(索引の状態)は残す
         self.assertIn('output cut at 400 bytes', text)  # 短い形の中身は ltq のテストで確かめる
+
+    def test_plugin_server_finds_the_workspace_from_the_copilot_session(self):
+        # プラグインとして起動されると、作業フォルダはプラグインの場所(PLUGIN_ROOT)になる。Copilot CLI のセッションの
+        # 記録(session-state/<id>/workspace.yaml の cwd)から作業フォルダを取る
+        plugin = tempfile.mkdtemp(prefix='cri')
+        try:
+            home = os.path.join(plugin, 'home')
+            os.makedirs(os.path.join(home, 'session-state', 'abc-123'))
+            with open(os.path.join(home, 'session-state', 'abc-123', 'workspace.yaml'), 'w', encoding='utf-8') as f:
+                f.write(f'id: abc-123\ncwd: {self.root}\nclient_name: github/cli\n')
+            self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+            self.proc.stdout.close()
+            self.start([], cwd=plugin, env={'PLUGIN_ROOT': plugin, 'COPILOT_HOME': home, 'COPILOT_AGENT_SESSION_ID': 'abc-123'})
+            self.assertIn('call   src/a.cpp:3  [in Main]', self.refs_text())
+        finally:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+            self.proc.stdout.close()
+            shutil.rmtree(plugin)
+            self.start(['--root', self.root])  # tearDown が閉じる
+
+    def test_root_argument(self):
+        # 作業フォルダが分からないクライアント向けに、ツールの引数 root でルートを渡せる
+        elsewhere = tempfile.mkdtemp(prefix='cri')
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+            self.proc.stdout.close()
+            self.start([], cwd=elsewhere)
+            r = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run', 'root': self.root}})['result']
+            self.assertFalse(r['isError'], r['content'][0]['text'])
+            self.assertIn('call   src/a.cpp:3  [in Main]', r['content'][0]['text'])
+            r = self.send('tools/call', {'name': 'check', 'arguments': {'locations': ['src/a.cpp:3'], 'root': self.root}})
+            self.assertIn('src/a.cpp:3', r['result']['content'][0]['text'])
+        finally:
+            self.proc.stdin.close()  # サーバーの作業フォルダを消せるように止める
+            self.proc.wait(timeout=10)
+            self.proc.stdout.close()
+            shutil.rmtree(elsewhere)
+            self.start(['--root', self.root])  # tearDown が閉じる
 
     def test_compact_form_that_fits_is_not_cut(self):
         # 全文が上限を超え、短い形なら収まるときは、短い形をそのまま返す(切らない)

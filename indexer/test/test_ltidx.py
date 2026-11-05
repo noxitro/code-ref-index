@@ -17,6 +17,18 @@ LTIDX = os.environ.get('LTIDX') or os.path.join(HERE, '..', 'build', 'ltidx.exe'
 sys.path.insert(0, os.path.join(HERE, '..', '..', 'query'))
 import ltq  # noqa: E402
 
+def llvm_resource_dir():
+    """ltidx をビルドした LLVM の組み込みヘッダーの場所(lib\\clang\\<版>)。分からなければ None。"""
+    root = os.environ.get('LLVM_ROOT')
+    rf = os.path.join(HERE, '..', 'llvm-root.txt')
+    if not root and os.path.exists(rf):
+        with open(rf, 'rb') as f:
+            root = f.read().decode('mbcs' if os.name == 'nt' else 'utf-8').splitlines()[0].strip()
+    d = os.path.join(root, 'lib', 'clang') if root else ''
+    vers = sorted(os.listdir(d)) if os.path.isdir(d) else []
+    return os.path.join(d, vers[-1]) if vers else None
+
+
 SJIS_SRC = '''struct Base { virtual void Draw(); virtual ~Base(); };
 struct Derived : Base { void Draw() override; };
 void Run();
@@ -108,6 +120,34 @@ class LtidxTest(unittest.TestCase):
         rc, err = self.run_ltidx()
         self.assertEqual(rc, 0, err)
         self.assertEqual(sorted(self.tus()), ['a.cpp'])
+
+    @unittest.skipUnless(llvm_resource_dir(), 'needs the LLVM that ltidx was built with (LLVM_ROOT or llvm-root.txt)')
+    def test_bundled_resource_dir(self):
+        # 配布物の形(LLVM 無し): ltidx.exe の隣の lib\clang\<版>\include を組み込みヘッダーに使う
+        self.write('a.cpp', '#include <stddef.h>\nvoid Run();\nvoid F() { size_t n = 0; Run(); }\n', [])
+        rc, err = self.run_ltidx()
+        self.assertEqual(rc, 0, err)
+        built = self.tus()['a.cpp']
+        pkg = tempfile.mkdtemp(prefix='cri')
+        try:
+            src = llvm_resource_dir()
+            shutil.copytree(os.path.join(src, 'include'), os.path.join(pkg, 'lib', 'clang', os.path.basename(src), 'include'))
+            exe = shutil.copy(LTIDX, pkg)
+            out = os.path.join(self.root, '.index', 'index.tsv')
+            r = subprocess.run([exe, '-p', self.root, '-root', self.root, '-o', out],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            bundled = self.tus()['a.cpp']
+            self.assertEqual(bundled[1], '1', bundled)
+            self.assertTrue(self.has('Run', 'call', 'a.cpp:3:26'))
+            self.assertNotEqual(bundled[6], built[6])  # 作り方の記録(組み込みヘッダーの場所を含む)が隣のものに変わった
+            # 組み込みヘッダーが無ければ、解析に進まずに止まる
+            r = subprocess.run([exe, '-p', self.root, '-root', self.root, '-o', out, '-resource-dir', os.path.join(pkg, 'none')],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace')
+            self.assertEqual(r.returncode, 2)
+            self.assertIn('組み込みヘッダーがありません', r.stderr)
+        finally:
+            shutil.rmtree(pkg, ignore_errors=True)
 
     def test_gcc_style_command_lines(self):
         # gcc 形式(g++・clang++)の引数でも TU が通り、実体化されないテンプレートの中の呼び出しも載る。

@@ -86,6 +86,12 @@ if (-not (Get-Command copilot -ErrorAction SilentlyContinue)) {
     return
 }
 # copilot は copilot.ps1 / copilot.cmd。pwsh から .ps1 を呼ぶと -- が消えるので、cmd から呼ぶ
+# cxxref プラグイン(チームのマーケットプレイスなどから入れたもの)が MCP サーバーを持っているので、入っていれば登録しない
+$plugins = try { @(& cmd /c 'copilot plugin list --json 2>nul' | Out-String | ConvertFrom-Json) } catch { @() }
+if ($plugins | Where-Object { $_.name -eq 'cxxref' -and $_.enabled -ne $false }) {
+    'Copilot CLI には cxxref プラグインが入っているので、MCP サーバーの登録は要りません(プラグインのものが使われます)'
+    return
+}
 $info = & cmd /c 'copilot mcp get code-ref-index 2>&1' | Out-String
 $registered = $LASTEXITCODE -eq 0
 if ($registered -and $info.IndexOf($server, [StringComparison]::OrdinalIgnoreCase) -ge 0) {

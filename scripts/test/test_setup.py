@@ -25,9 +25,11 @@ SERVER = os.path.realpath(os.path.join(HERE, '..', '..', 'mcp', 'server.py'))
 VSWHERE = os.path.join(os.environ.get('ProgramFiles(x86)', ''), 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
 PWSH = shutil.which('pwsh')
 
-# 呼ばれた引数を記録し、`mcp get` には FAKE_COPILOT_SERVER があれば登録済み、無ければ未登録と答える
+# 呼ばれた引数を記録し、`mcp get` には FAKE_COPILOT_SERVER があれば登録済み、無ければ未登録と答える。
+# `plugin list --json` には FAKE_COPILOT_PLUGINS(入っているプラグインの JSON)を返す
 FAKE_COPILOT = r'''@echo off
 >>"%FAKE_COPILOT_LOG%" echo %*
+if "%1 %2"=="plugin list" (if defined FAKE_COPILOT_PLUGINS echo %FAKE_COPILOT_PLUGINS%) & exit /b 0
 if not "%1 %2"=="mcp get" exit /b 0
 if not defined FAKE_COPILOT_SERVER exit /b 1
 echo code-ref-index
@@ -105,7 +107,7 @@ class SetupFlowTest(SetupBase):
         r = self.run_ps('-LlvmRoot', llvm_root(), *args, env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(self.log) as f:
-            return f.read().splitlines()
+            return [c for c in f.read().splitlines() if c != 'plugin list --json']
 
     def test_index_instructions_and_register(self):
         calls = self.setup('-Root', self.src, '-Instructions', '-RegisterCopilot')
@@ -182,10 +184,11 @@ class SetupPromptTest(unittest.TestCase):
         open(os.path.join(p, 'lib', 'cmake', 'clang', 'ClangConfig.cmake'), 'w').close()
         return p
 
-    def setup(self, *args, answers=()):
+    def setup(self, *args, answers=(), env=None):
         """setup.ps1 を args で起動し、問い合わせに answers を順に答える。(結果, build.bat が読めたか, 偽物の copilot に渡った引数)。"""
         e = {k: v for k, v in os.environ.items() if k.upper() != 'LLVM_ROOT'}
         e.update({'PATH': os.path.join(self.repo, 'bin') + os.pathsep + os.environ['PATH'], 'FAKE_COPILOT_LOG': self.log})
+        e.update(env or {})
         r = subprocess.run([PWSH, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                             os.path.join(self.repo, 'scripts', 'setup.ps1')] + list(args),
                            input=''.join(x + '\n' for x in answers), capture_output=True, text=True, errors='replace', env=e)
@@ -193,7 +196,9 @@ class SetupPromptTest(unittest.TestCase):
         with open(os.path.join(self.repo, 'indexer', 'read.txt')) as f:
             read = f.read().strip()
         with open(self.log, encoding='oem') as f:
-            return r, read, f.read().splitlines()
+            calls = f.read().splitlines()
+        self.assertEqual(calls[0], 'plugin list --json')  # 先にプラグインが入っているかを見る
+        return r, read, calls[1:]
 
     def saved_root(self):
         with open(self.root_file, encoding='oem') as f:
@@ -226,6 +231,19 @@ class SetupPromptTest(unittest.TestCase):
         self.assertEqual(read, 'none')
         self.assertFalse(os.path.exists(self.root_file))
         self.assertIn(f'OEM {ctypes.windll.kernel32.GetOEMCP()}', r.stdout)
+
+    def test_registration_is_skipped_when_the_plugin_is_installed(self):
+        # cxxref プラグインが MCP サーバーを持っているので、入っていれば登録も問い合わせもしない
+        llvm = self.fake_llvm('LLVM dir')
+        r, read, calls = self.setup('-LlvmRoot', llvm, '-NoIndex', '-RegisterCopilot',
+                                    env={'FAKE_COPILOT_PLUGINS': '[{"name":"cxxref","enabled":true,"source":"x"}]'})
+        self.assertEqual(calls, [])
+        # 無効にしてあれば、ふだんどおり登録する
+        os.remove(self.log)
+        r, read, calls = self.setup('-LlvmRoot', llvm, '-NoIndex', '-RegisterCopilot',
+                                    env={'FAKE_COPILOT_PLUGINS': '[{"name":"cxxref","enabled":false,"source":"x"}]'})
+        self.assertEqual(calls[0], 'mcp get code-ref-index')
+        self.assertTrue(any(c.startswith('mcp add code-ref-index') for c in calls), calls)
 
 if __name__ == '__main__':
     unittest.main()

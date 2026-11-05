@@ -32,8 +32,14 @@ if (-not $Cdb) {
 }
 $Cdb = (Resolve-Path $Cdb).Path
 if (-not (Test-Path "$Cdb\compile_commands.json")) { throw "compile_commands.json not found in $Cdb" }
-$exe = Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe'
-if (-not (Test-Path $exe)) { throw "ltidx.exe not found. Run indexer\build.bat first." }
+# ltidx.exe は、環境変数 LTIDX、このリポジトリでビルドしたもの、配布物を取ってきたもの(get-ltidx)の順に探す(mcp\autoupdate.py と同じ)
+$exe = if ($env:LTIDX) { $env:LTIDX } else {
+    @((Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe'), (Join-Path "$env:LOCALAPPDATA" 'cxxref\ltidx\ltidx.exe')) |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
+if (-not $exe -or -not (Test-Path -LiteralPath $exe)) {
+    throw "ltidx.exe not found. Run $(Join-Path $PSScriptRoot 'get-ltidx.bat') once (or build it with indexer\build.bat)."
+}
 
 New-Item -ItemType Directory "$Root\.index" -Force | Out-Null
 # 索引は git に入れない。プロジェクトの .gitignore は書き換えず、.index の中に「全部を無視する」.gitignore を置く
@@ -51,7 +57,7 @@ if ($Update) {
     if (Test-Path "$out.deps.tsv") { $ltidxArgs += '-update' }
     else { '前回の索引(.deps.tsv 付き)が無いので、全体を作ります' }
 }
-$p = Start-Process -FilePath (Resolve-Path $exe) -ArgumentList $ltidxArgs `
+$p = Start-Process -FilePath (Resolve-Path -LiteralPath $exe).Path -ArgumentList $ltidxArgs `
     -NoNewWindow -PassThru -RedirectStandardError "$Root\.index\$Name.log"
 $p.PriorityClass = 'Idle'
 $p.WaitForExit()
