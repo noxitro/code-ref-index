@@ -83,9 +83,9 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 ```json
 {
   "name": "cxxref",
-  "source": { "source": "github", "repo": "noxitro/cxxref", "ref": "v0.5.0" },
+  "source": { "source": "github", "repo": "noxitro/cxxref", "ref": "v0.5.1" },
   "description": "C++ reference index (clang libtooling) as MCP tools",
-  "version": "0.5.0"
+  "version": "0.5.1"
 }
 ```
 

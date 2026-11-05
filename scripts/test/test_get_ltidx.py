@@ -39,7 +39,13 @@ class GetLtidxTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.mkdtemp(prefix='cri')
-        r = ps('package-ltidx.ps1', '-LlvmRoot', llvm_root(), '-OutDir', os.path.join(cls.tmp, 'dist'))
+        # ライセンスの表示は CI が LLVM のソースから作って渡す(llvm-notices.py)。ここでは同梱されることだけを見る
+        for n in ('LICENSE-LLVM', 'NOTICES'):
+            with open(os.path.join(cls.tmp, n + '.txt'), 'w', encoding='utf-8') as f:
+                f.write(f'{n} for the test\n')
+        r = ps('package-ltidx.ps1', '-LlvmRoot', llvm_root(), '-OutDir', os.path.join(cls.tmp, 'dist'),
+               '-LlvmLicense', os.path.join(cls.tmp, 'LICENSE-LLVM.txt'),
+               '-ThirdPartyNotices', os.path.join(cls.tmp, 'NOTICES.txt'))
         assert r.returncode == 0, r.stdout + r.stderr
         cls.zip = os.path.join(cls.tmp, 'dist', 'cxxref-ltidx-win-x64.zip')
 
@@ -63,6 +69,12 @@ class GetLtidxTest(unittest.TestCase):
             self.assertEqual(f.read().strip(), version)
         clang = os.listdir(os.path.join(self.ltidx, 'lib', 'clang'))
         self.assertTrue(os.path.exists(os.path.join(self.ltidx, 'lib', 'clang', clang[0], 'include', 'stddef.h')))
+        # 二次配布の条件: cxxref・LLVM のライセンスと、ltidx.exe に埋め込まれた別ライセンスの部品の表示を同梱する
+        with open(os.path.join(self.ltidx, 'THIRD-PARTY-NOTICES.txt'), encoding='utf-8') as f:
+            self.assertEqual(f.read(), 'NOTICES for the test\n')
+        with open(os.path.join(self.ltidx, 'LICENSE-LLVM.txt'), encoding='utf-8') as f:
+            self.assertEqual(f.read(), 'LICENSE-LLVM for the test\n')
+        self.assertTrue(os.path.exists(os.path.join(self.ltidx, 'LICENSE.txt')))
         # 置いた ltidx.exe で、組み込みヘッダーを使う TU の索引ができる
         src = os.path.join(self.dest, 'src')
         os.makedirs(src)

@@ -9,7 +9,7 @@
       "name": "cxxref",
       "source": "./",
       "description": "C++ reference index built with clang (libtooling) for every TU. Adds the code-ref-index MCP server and the rule to use it before grep.",
-      "version": "0.5.0"
+      "version": "0.5.1"
     }
   ]
 }

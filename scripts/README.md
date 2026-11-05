@@ -63,7 +63,7 @@ index-project.bat -Root D:\src\game -Cdb D:\build\game
 LLVM と Visual Studio で ltidx をビルドせずに使うときは、`get-ltidx.bat` をダブルクリックします。GitHub のリリースから、`plugin.json` の版の配布物(`cxxref-ltidx-win-x64.zip`。ltidx.exe・clang の組み込みヘッダー・ライセンス)を取ってきて、sha256 を確かめてから `%LOCALAPPDATA%\cxxref\ltidx` に置きます。途中で失敗したら前のものを残します。
 
 - `-Version 0.5.0` で版を、`-Zip <zip>` で手元の zip を、`-Dest <フォルダ>` で置き場所を指定できます
-- 配布物は `package-ltidx.ps1` が作ります(CI がタグのときにリリースに載せます。手元では `pwsh -File package-ltidx.ps1` で `dist\` に作ります)
+- 配布物は `package-ltidx.ps1` が作ります(CI がタグのときにリリースに載せます)。ライセンスの表示(LLVM のライセンス文と、`llvm-notices.py` が LLVM のソースから作る別ライセンスの部品の表示)は CI が渡します。手元で `pwsh -File package-ltidx.ps1` で作った `dist\` の zip は、表示が足りないので配らないでください(そう警告します)
 
 ### 使い方の指示を足す・消す(`setup-instructions.bat`)
 
@@ -104,5 +104,6 @@ setup-instructions.bat -Root D:\src\game -Action Remove
   - LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
   - 通しで、索引・`.index\.gitignore`・使い方の指示ができること。Copilot CLI への登録は、未登録なら行い、このリポジトリの `server.py` で登録済みなら何もせず、別の場所の `server.py` で登録されていても `-RegisterCopilot` が無ければ登録し直さないこと。Copilot CLI は偽物の `copilot.cmd` に差し替えて確かめるので、本物の設定には触れません(Visual Studio・LLVM・ビルド済みの `ltidx.exe` が要ります)
   - 引数無し(ダブルクリック)のときの問い合わせ: 空のまま Enter で前の LLVM の場所を使うこと、引用符と末尾の `\` を外すこと、登録の Y/n(空なら Y)。空白と ASCII でない文字(日本語版の Windows なら日本語、英語版なら é)を含む LLVM の場所を書いた `llvm-root.txt` を、`build.bat`(cmd の `set /p`)が読み戻せること。cmd のコードページで表せない文字を含む場所は、`llvm-root.txt` に書かずに知らせること。一時フォルダに写した `setup.ps1` と、偽物の `build.bat`・LLVM で確かめるので、本物のビルドと `indexer\llvm-root.txt` には触れません(pwsh だけで走ります)
-- `package-ltidx` で作った zip を `get-ltidx` で取り込むと、ltidx.exe・組み込みヘッダー・版が置かれ、その ltidx.exe で索引が作れること。sha256 が合わない zip は取り込まず、前のものを残すこと(ネットワークは使いません。ビルド済みの ltidx.exe と LLVM が要ります)
+- `llvm-notices.py` が、LLVM のソースの写しから各部品の表示(目印を含むコメント)を写すこと。目印が見つからなければ、欠けた表示を作らずに失敗すること(ネットワークは使いません)
+- `package-ltidx` で作った zip を `get-ltidx` で取り込むと、ltidx.exe・組み込みヘッダー・版・ライセンスの表示が置かれ、その ltidx.exe で索引が作れること。sha256 が合わない zip は取り込まず、前のものを残すこと(ネットワークは使いません。ビルド済みの ltidx.exe と LLVM が要ります)
 - `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)

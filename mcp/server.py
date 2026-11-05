@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I ではス�
 import ltq  # noqa: E402
 import autoupdate  # noqa: E402
 
-VERSION = '0.5.0'
+VERSION = '0.5.1'
 PROTOCOL = '2025-06-18'
 # 結果の大きさの上限の既定。Copilot CLI は 20,480 バイト(COPILOT_LARGE_OUTPUT_THRESHOLD_BYTES)を超える
 # ツールの結果をモデルに渡さず、ファイルに退かせて先頭だけを見せる【実測: 1.0.18 の app.js。1.0.105 は native に移り、

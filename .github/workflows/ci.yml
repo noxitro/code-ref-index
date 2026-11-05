@@ -73,9 +73,19 @@ jobs:
           CRI_REQUIRE_LTIDX: '1'
         run: python -I -W error::ResourceWarning -m unittest discover -s mcp/test -v
       # LLVM 無しで使える配布物(ltidx.exe・clang の組み込みヘッダー・ライセンス)。scripts\get-ltidx.ps1 が取ってくる
+      # ltidx.exe に埋め込まれた LLVM の中の別ライセンスの部品(BSD・Unicode)の表示を、その版のソースから作る(リポジトリには置かない)
       - name: Package ltidx
         shell: pwsh
-        run: scripts\package-ltidx.ps1 -LlvmLicense C:\llvm\LICENSE.TXT -OutDir dist
+        run: |
+          python -I scripts\llvm-notices.py --version $env:LLVM_VERSION --out dist\THIRD-PARTY-NOTICES.txt
+          scripts\package-ltidx.ps1 -LlvmLicense C:\llvm\LICENSE.TXT -ThirdPartyNotices dist\THIRD-PARTY-NOTICES.txt -OutDir dist
+          # 配る zip にライセンスの表示がそろっているか(欠けていればリリースに載せない)
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path dist\cxxref-ltidx-win-x64.zip))
+          $names = $z.Entries.FullName; $z.Dispose()
+          foreach ($n in 'ltidx.exe', 'LICENSE.txt', 'LICENSE-LLVM.txt', 'THIRD-PARTY-NOTICES.txt') {
+            if ($names -notcontains $n) { throw "the package lacks $n" }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: cxxref-ltidx-win-x64
