@@ -71,8 +71,8 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 | 誰が | いつ | すること |
 |---|---|---|
 | チームのマーケットプレイスの管理者 | 1 回(版を上げるときも) | マーケットプレイスに cxxref を載せる |
-| 各メンバー | PC で 1 回 | プラグインを入れる(手で入れるか、リポジトリの設定で自動で入れる)。`get-ltidx.bat` で ltidx を取ってくる(プラグインを更新したらもう一度) |
-| 各メンバー | リポジトリ(手元の作業フォルダ)ごとに 1 回 | `index-project.bat` で索引を作る(索引は git に入れないので、各自が作る。規模によって数分) |
+| 各メンバー | PC で 1 回 | プラグインを入れる(手で入れるか、リポジトリの設定で自動で入れる)。`/cxxref-index` を使うなら、機能フラグ `EXTENSIONS` を有効にする |
+| 各メンバー | リポジトリ(手元の作業フォルダ)ごとに 1 回 | セッションで `/cxxref-index` を実行して索引を作る(ltidx が無ければ先に取ってくる。モデルは呼ばない)。拡張を使わないなら `get-ltidx.bat` と `index-project.bat`。索引は git に入れないので各自が作る。規模によって数分 |
 
 その後は、コードを変えても MCP サーバーが変わった TU だけを作り直すので、手で作り直す必要はありません。
 
@@ -105,9 +105,23 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
      ```
 
    - 手で入れます: `copilot plugin marketplace add <org>/<マーケットプレイスのリポジトリ>` の後、`copilot plugin install cxxref@<マーケットプレイス名>`
-2. **ltidx を取ってくる(PC で 1 回。プラグインを更新したらもう一度)**: プラグインのフォルダ(`%USERPROFILE%\.copilot\installed-plugins\<マーケットプレイス名>\cxxref`)の `scripts\get-ltidx.bat` をダブルクリックします。リリースから plugin.json の版の配布物を取ってきて、sha256 を確かめてから `%LOCALAPPDATA%\cxxref\ltidx` に置きます
-3. **索引を作る(プロジェクトごと)**: 同じフォルダの `scripts\index-project.bat` をダブルクリックし、ソースのルートを入れます(上の「使い始める」の手順 3 と同じです)。以後はコードを変えても、MCP サーバーが変わった TU だけを作り直します
-   - 索引の無いリポジトリで `refs` が呼ばれると、MCP サーバーは「索引が無い」と答え、上の 2 つのコマンドを絶対パスで添えます。rule は、作る前にユーザーに確かめるようモデルに指示しています
+2. **索引を作る(リポジトリごと)。セッションの中で `/cxxref-index` を実行するのがいちばん簡単です**(下の「`/cxxref-index`」)。ltidx が無ければ先に取ってきて、作業中のリポジトリの索引を裏で作ります。モデルは呼ばないので、トークンを使いません。拡張を使わない(使えない)ときは、次の 2 つを手で行います
+   - 手で行うときの ltidx の取得(PC で 1 回。プラグインを更新したらもう一度): プラグインのフォルダ(`%USERPROFILE%\.copilot\installed-plugins\<マーケットプレイス名>\cxxref`)の `scripts\get-ltidx.bat` をダブルクリックします。リリースから plugin.json の版の配布物を取ってきて、sha256 を確かめてから `%LOCALAPPDATA%\cxxref\ltidx` に置きます
+   - 手で行うときの索引づくり(リポジトリごと): 同じフォルダの `scripts\index-project.bat` をダブルクリックし、ソースのルートを入れます(上の「使い始める」の手順 3 と同じです)。セッションの中なら、`!` を付けるとモデルを通さずに動きます: `!"%USERPROFILE%\.copilot\installed-plugins\<マーケットプレイス名>\cxxref\scripts\index-project.bat" -Root .`
+   - 以後はコードを変えても、MCP サーバーが変わった TU だけを作り直します
+   - 索引の無いリポジトリで `refs` が呼ばれると、MCP サーバーは「索引が無い」と答え、作り方のコマンドを絶対パスで添えます。rule は、作る前にユーザーに確かめるようモデルに指示しています
+
+### `/cxxref-index`(索引を作るスラッシュコマンド)
+
+プラグインの拡張(`com.github.copilot\extensions\cxxref\extension.mjs`)が足すコマンドです。Copilot CLI のセッションで `/cxxref-index` と打つと、モデルを呼ばずに次を行います。
+
+- ltidx.exe が無ければ、リリースから取ってくる(`scripts\get-ltidx.ps1` と同じ)
+- 作業フォルダ(または、親へさかのぼって `.index` のあるフォルダ)の索引を、裏で作る。索引がすでにあれば、変わった TU だけを作り直す。`/cxxref-index <ルート>` でルートを指定できる
+- 始めたとき・終わったとき(かかった秒数)・失敗したとき(ログの場所)を、セッションに出す。ログは `<ルート>\.index\cxxref-index.log`。同時に 2 つは走らせない
+
+**Copilot CLI の拡張は実験的機能で、機能フラグ `EXTENSIONS` が有効なときだけ読み込まれます。** `%USERPROFILE%\.copilot\settings.json` に `"feature_flags": { "enabled": ["EXTENSIONS"] }` を足す(すでに `feature_flags` があれば、`enabled` の配列に `"EXTENSIONS"` を足す)か、環境変数 `COPILOT_CLI_ENABLED_FEATURE_FLAGS=EXTENSIONS` を設定してから起動します。拡張はセッションが始まってから読み込まれるので、入力欄に `/cx` と打って一覧に出てから実行します(一覧に出る前に送ると、ただの依頼としてモデルに送られます)。
+
+確かめたこと(Copilot CLI 1.0.105 のランタイムを SDK から画面なしで動かした): この形式(Agent Plugins 1.0)のプラグインで拡張が見つかり、`/cxxref-index` が一覧に出ること。小さなプロジェクトで実行すると索引ができ、2 回目は変わった分だけの作り直しになること。どちらもモデルの呼び出しは 0 回(`totalUserRequests` 0、`totalNanoAiu` 0)。Copilot CLI の画面とデスクトップ アプリでは、まだ試していません。
 
 `setup.bat` の Copilot CLI への登録との関係: cxxref プラグインが入っていれば、`setup.bat` は MCP サーバーを登録しません。手で登録した `code-ref-index` が残っていても、同じ名前のプラグインのものが使われます(公式の優先順位)。要らなければ `copilot mcp remove code-ref-index` で消せます。
 

@@ -6,6 +6,8 @@ usage: python -I -m unittest discover -s mcp/test   (リポジトリのルート
 import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
@@ -59,6 +61,21 @@ class PluginTest(unittest.TestCase):
         self.assertRegex(head.group(1), r'(?m)^description: \S')
         self.assertRegex(head.group(1), r'(?m)^alwaysApply: true$')
         self.assertIn('`root`', text)  # プラグインのサーバーは作業フォルダを知らないので、root を渡させる
+
+    def test_extension(self):
+        # 索引を作るスラッシュコマンド /cxxref-index(モデルを呼ばない拡張)。Agent Plugins 1.0 では com.github.copilot/extensions/
+        # の下に置くと読まれる【実測: 1.0.105。SDK でランタイムを動かし、出どころ plugin として見つかった】
+        ext = os.path.join(ROOT, 'com.github.copilot', 'extensions', 'cxxref', 'extension.mjs')
+        with open(ext, encoding='utf-8') as f:
+            text = f.read()
+        self.assertIn('name: "cxxref-index"', text)
+        for s in ('get-ltidx.ps1', 'index-project.ps1'):  # 拡張が動かすスクリプトがプラグインの中にある
+            self.assertIn(s, text)
+            self.assertTrue(os.path.exists(os.path.join(ROOT, 'scripts', s)))
+        node = shutil.which('node')
+        if node:
+            r = subprocess.run([node, '--check', ext], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
 
 
 if __name__ == '__main__':
