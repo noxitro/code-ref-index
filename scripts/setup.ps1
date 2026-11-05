@@ -36,8 +36,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $LlvmRoot 'lib\cmake\clang\ClangConf
     throw "LLVM が見つかりません(lib\cmake\clang\ClangConfig.cmake がありません): $LlvmRoot`nMSI 版ではなく、公式リリースの .tar.xz を展開したフォルダを指定してください"
 }
 $LlvmRoot = (Resolve-Path -LiteralPath $LlvmRoot).Path
-[IO.File]::WriteAllText($rootFile, "$LlvmRoot`r`n", $enc)
-"LLVM の場所を書きました: $rootFile"
+if ($enc.GetString($enc.GetBytes($LlvmRoot)) -ne $LlvmRoot) {
+    # 書くと ? に化け、build.bat を単独で叩いたときに別の場所を読む(英語版の Windows の OEM 437 で日本語など)
+    "注意: LLVM の場所に、cmd のコードページ(OEM $($enc.CodePage))で表せない文字があるので、$rootFile には書きません。" +
+        "この実行のビルドには使います。indexer\build.bat を単独で叩くときは、環境変数 LLVM_ROOT を設定するか、表せる文字だけの場所に LLVM を置いてください"
+} else {
+    [IO.File]::WriteAllText($rootFile, "$LlvmRoot`r`n", $enc)
+    "LLVM の場所を書きました: $rootFile"
+}
 if ($env:LLVM_ROOT -and $env:LLVM_ROOT -ne $LlvmRoot) {
     "注意: 環境変数 LLVM_ROOT($env:LLVM_ROOT)が設定されています。indexer\build.bat を単独で叩くと、そちらが優先されます"
 }

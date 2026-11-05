@@ -9,6 +9,7 @@
 
 usage: python -I -m unittest discover -s scripts/test   (リポジトリのルートで)
 """
+import ctypes
 import os
 import shutil
 import subprocess
@@ -128,19 +129,33 @@ class SetupFlowTest(SetupBase):
         self.assertFalse(os.path.exists(os.path.join(self.src, '.index')))
 
 
-# llvm-root.txt を本物の build.bat と同じく set /p で読み、LLVM に見えるかを read.txt に書く
+# llvm-root.txt を本物の build.bat と同じく set /p で読み、LLVM に見えるかを read.txt に書く(ファイルが無ければ none)
 FAKE_BUILD = r'''@echo off
 set LLVM_ROOT=
+if not exist "%~dp0llvm-root.txt" (echo none>"%~dp0read.txt" & exit /b 0)
 set /p LLVM_ROOT=<"%~dp0llvm-root.txt"
 if exist "%LLVM_ROOT%\lib\cmake\clang\ClangConfig.cmake" (echo ok>"%~dp0read.txt") else (echo ng>"%~dp0read.txt")
 exit /b 0
 '''
 
 
+def oem_name(*names):
+    """cmd のコードページ(OEM)で表せる最初の名前。日本語版なら日本語、英語版(437)なら é を使う。"""
+    for n in names:
+        try:
+            n.encode('oem')
+            return n
+        except UnicodeEncodeError:
+            pass
+    raise AssertionError(names)
+
+
 @unittest.skipUnless(PWSH and os.name == 'nt', 'pwsh on Windows is required')
 class SetupPromptTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix='cri セットアップ ')
+        # 標準入力の文字コードは pwsh と Python で揃わないことがある(英語版の Windows など)ので、入力する場所は ASCII にし、
+        # ASCII でない場所は llvm-root.txt と引数で渡す。8.3 形式の短い名前(RUNNER~1)は長い名前にしておく
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix='cri setup '))
         self.repo = os.path.join(self.tmp, 'repo')
         for d in ('scripts', 'indexer', 'mcp', 'bin'):
             os.makedirs(os.path.join(self.repo, d))
@@ -150,44 +165,62 @@ class SetupPromptTest(unittest.TestCase):
         open(os.path.join(self.repo, 'mcp', 'server.py'), 'w').close()
         with open(os.path.join(self.repo, 'bin', 'copilot.cmd'), 'w', newline='\r\n') as f:
             f.write(FAKE_COPILOT)
-        self.llvm = os.path.join(self.tmp, 'LLVM の 場所')  # 空白と日本語
-        os.makedirs(os.path.join(self.llvm, 'lib', 'cmake', 'clang'))
-        open(os.path.join(self.llvm, 'lib', 'cmake', 'clang', 'ClangConfig.cmake'), 'w').close()
         self.root_file = os.path.join(self.repo, 'indexer', 'llvm-root.txt')
         self.log = os.path.join(self.tmp, 'copilot.log')
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def answer(self, *lines):
-        """引数無しで起動し、問い合わせに lines を順に答える。偽物の copilot に渡った引数を返す。"""
+    def fake_llvm(self, name):
+        p = os.path.join(self.tmp, name)
+        os.makedirs(os.path.join(p, 'lib', 'cmake', 'clang'))
+        open(os.path.join(p, 'lib', 'cmake', 'clang', 'ClangConfig.cmake'), 'w').close()
+        return p
+
+    def setup(self, *args, answers=()):
+        """setup.ps1 を args で起動し、問い合わせに answers を順に答える。(結果, build.bat が読めたか, 偽物の copilot に渡った引数)。"""
         e = {k: v for k, v in os.environ.items() if k.upper() != 'LLVM_ROOT'}
         e.update({'PATH': os.path.join(self.repo, 'bin') + os.pathsep + os.environ['PATH'], 'FAKE_COPILOT_LOG': self.log})
         r = subprocess.run([PWSH, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
-                            os.path.join(self.repo, 'scripts', 'setup.ps1')],
-                           input=''.join(x + '\n' for x in lines), capture_output=True, text=True, errors='replace', env=e)
+                            os.path.join(self.repo, 'scripts', 'setup.ps1')] + list(args),
+                           input=''.join(x + '\n' for x in answers), capture_output=True, text=True, errors='replace', env=e)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(os.path.join(self.repo, 'indexer', 'read.txt')) as f:
-            self.assertEqual(f.read().strip(), 'ok')  # build.bat が llvm-root.txt から LLVM を読み戻せた
-        with open(self.root_file, encoding='oem') as f:
-            self.assertEqual(f.read(), self.llvm + '\n')
+            read = f.read().strip()
         with open(self.log, encoding='oem') as f:
-            return f.read().splitlines()
+            return r, read, f.read().splitlines()
+
+    def saved_root(self):
+        with open(self.root_file, encoding='oem') as f:
+            return f.read()
 
     def test_typed_path_with_quotes_and_no_registration(self):
-        # LLVM の場所(引用符と末尾の \ 付き)、ルートは空で索引を飛ばす、登録は n
-        calls = self.answer(f'"{self.llvm}\\"', '', 'n')
+        # LLVM の場所(空白を含み、引用符と末尾の \ 付き)、ルートは空で索引を飛ばす、登録は n
+        llvm = self.fake_llvm('LLVM dir')
+        r, read, calls = self.setup(answers=[f'"{llvm}\\"', '', 'n'])
+        self.assertEqual(read, 'ok')  # build.bat が llvm-root.txt から LLVM を読み戻せた
+        self.assertEqual(self.saved_root(), llvm + '\n')
         self.assertEqual(calls, ['mcp get code-ref-index'])
         self.assertFalse(os.path.exists(os.path.join(self.repo, '.index')))
 
     def test_empty_enter_reuses_the_saved_path_and_registers_by_default(self):
+        llvm = self.fake_llvm(oem_name('LLVM の 場所', 'LLVM é dossier'))  # 空白と ASCII でない文字
         with open(self.root_file, 'w', encoding='oem', newline='\r\n') as f:
-            f.write(self.llvm + '\n')
-        calls = self.answer('', '', '')  # 3 つとも空のまま Enter(登録の Y/n は Y)
+            f.write(llvm + '\n')
+        r, read, calls = self.setup(answers=['', '', ''])  # 3 つとも空のまま Enter(登録の Y/n は Y)
+        self.assertEqual(read, 'ok')
+        self.assertEqual(self.saved_root(), llvm + '\n')
         server = os.path.realpath(os.path.join(self.repo, 'mcp', 'server.py'))
         self.assertEqual(calls[0], 'mcp get code-ref-index')
         self.assertIn(f'mcp add code-ref-index -- python -I "{server}"', calls)
 
+    def test_path_the_code_page_cannot_hold_is_not_written(self):
+        # OEM で表せない文字の場所は、書くと ? に化けて build.bat が別の場所を読むので、llvm-root.txt に書かずに知らせる
+        llvm = self.fake_llvm('LLVM \U0001F600')
+        r, read, calls = self.setup('-LlvmRoot', llvm, '-NoIndex')
+        self.assertEqual(read, 'none')
+        self.assertFalse(os.path.exists(self.root_file))
+        self.assertIn(f'OEM {ctypes.windll.kernel32.GetOEMCP()}', r.stdout)
 
 if __name__ == '__main__':
     unittest.main()

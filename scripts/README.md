@@ -96,5 +96,5 @@ setup-instructions.bat -Root D:\src\game -Action Remove
 - `setup`(リポジトリ直下の `setup.bat` の中身)
   - LLVM でないフォルダを渡すと、ビルドに進まず `indexer\llvm-root.txt` も書き換えないこと(pwsh だけで走ります)
   - 通しで、索引・`.index\.gitignore`・使い方の指示ができること。Copilot CLI への登録は、未登録なら行い、このリポジトリの `server.py` で登録済みなら何もせず、別の場所の `server.py` で登録されていても `-RegisterCopilot` が無ければ登録し直さないこと。Copilot CLI は偽物の `copilot.cmd` に差し替えて確かめるので、本物の設定には触れません(Visual Studio・LLVM・ビルド済みの `ltidx.exe` が要ります)
-  - 引数無し(ダブルクリック)のときの問い合わせ: 空のまま Enter で前の LLVM の場所を使うこと、引用符と末尾の `\` を外すこと、登録の Y/n(空なら Y)。空白と日本語を含む LLVM の場所を書いた `llvm-root.txt` を、`build.bat`(cmd の `set /p`)が読み戻せること。一時フォルダに写した `setup.ps1` と、偽物の `build.bat`・LLVM で確かめるので、本物のビルドと `indexer\llvm-root.txt` には触れません(pwsh だけで走ります)
+  - 引数無し(ダブルクリック)のときの問い合わせ: 空のまま Enter で前の LLVM の場所を使うこと、引用符と末尾の `\` を外すこと、登録の Y/n(空なら Y)。空白と ASCII でない文字(日本語版の Windows なら日本語、英語版なら é)を含む LLVM の場所を書いた `llvm-root.txt` を、`build.bat`(cmd の `set /p`)が読み戻せること。cmd のコードページで表せない文字を含む場所は、`llvm-root.txt` に書かずに知らせること。一時フォルダに写した `setup.ps1` と、偽物の `build.bat`・LLVM で確かめるので、本物のビルドと `indexer\llvm-root.txt` には触れません(pwsh だけで走ります)
 - `setup-instructions` で足して消すと元のファイルに戻ること(改行・BOM・自分で書いた指示を含む)、2 回足すと差し替わること(この確かめは pwsh だけで走ります)

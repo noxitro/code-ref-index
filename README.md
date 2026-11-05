@@ -43,7 +43,7 @@ Copilot で C++ の呼び出し箇所を探すと、LSP(clangd)を渡しても�
 
 1. **LLVM を用意する**: 公式リリースの `clang+llvm-<版>-x86_64-pc-windows-msvc.tar.xz` を展開します(MSI 版は不可)。動作を確かめた版は 23.1.4 です
 
-**手順 2〜5 は `setup.bat` でまとめてできます**: ダブルクリックし、LLVM の展開先とソースのルートを入れます。LLVM の場所を `indexer\llvm-root.txt` に書き、ltidx をビルドし、索引を作ります。続けて、使い方の指示を足すか、Copilot CLI に登録するかを Y/n で尋ねます(登録は、未登録か、別の場所の `server.py` で登録されているときだけ尋ねます)。2 回目からは、空のまま Enter で前の LLVM の場所を使います。ルートを空のまま Enter にすると、索引づくりと指示を飛ばします
+**手順 2〜5 は `setup.bat` でまとめてできます**: ダブルクリックし、LLVM の展開先とソースのルートを入れます。LLVM の場所を `indexer\llvm-root.txt` に書き、ltidx をビルドし、索引を作ります。続けて、使い方の指示を足すか、Copilot CLI に登録するかを Y/n で尋ねます(登録は、未登録か、別の場所の `server.py` で登録されているときだけ尋ねます)。2 回目からは、空のまま Enter で前の LLVM の場所を使います(LLVM の場所に cmd のコードページで表せない文字、たとえば英語版の Windows での日本語があると、`llvm-root.txt` には書かず、そう知らせます)。ルートを空のまま Enter にすると、索引づくりと指示を飛ばします
    - 引数でも渡せます: `setup.bat -LlvmRoot <LLVM> -Root <ルート> -Instructions -RegisterCopilot`。引数を渡したときは尋ねず、指示と登録は `-Instructions`・`-RegisterCopilot` を付けたときだけ行います。`-NoIndex` で索引づくりを飛ばします
 
 2. **ltidx をビルドする**: `indexer\build.bat` をダブルクリックします。LLVM の場所は、環境変数 `LLVM_ROOT` か、`indexer\llvm-root.txt`(1 行目に展開先のフォルダを書く。git には入りません)で指定します
