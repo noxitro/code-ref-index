@@ -134,13 +134,18 @@ FAKE_BUILD = r'''@echo off
 set LLVM_ROOT=
 if not exist "%~dp0llvm-root.txt" (echo none>"%~dp0read.txt" & exit /b 0)
 set /p LLVM_ROOT=<"%~dp0llvm-root.txt"
-if exist "%LLVM_ROOT%\lib\cmake\clang\ClangConfig.cmake" (echo ok>"%~dp0read.txt") else (echo ng>"%~dp0read.txt")
+if exist "%LLVM_ROOT%\lib\cmake\clang\ClangConfig.cmake" (echo ok>"%~dp0read.txt") else (chcp>"%~dp0read.txt")
 exit /b 0
 '''
 
 
 def oem_name(*names):
-    """cmd のコードページ(OEM)で表せる最初の名前。日本語版なら日本語、英語版(437)なら é を使う。"""
+    """cmd のコードページ(OEM)で表せる最初の名前。日本語版なら日本語、英語版(437)なら é を使う。
+    このプロセスのコンソールが OEM と別のコードページ(chcp で変えた・CI のランナーなど)なら、cmd は llvm-root.txt を
+    そのコードページで読むので、ASCII でない名前は確かめられない。そのときは最後の名前(ASCII)を使う。"""
+    k = ctypes.windll.kernel32
+    if k.GetConsoleCP() not in (0, k.GetOEMCP()):  # 0 はコンソールが無い(cmd は OEM の新しいコンソールで動く)
+        return names[-1]
     for n in names:
         try:
             n.encode('oem')
@@ -204,7 +209,7 @@ class SetupPromptTest(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.repo, '.index')))
 
     def test_empty_enter_reuses_the_saved_path_and_registers_by_default(self):
-        llvm = self.fake_llvm(oem_name('LLVM の 場所', 'LLVM é dossier'))  # 空白と ASCII でない文字
+        llvm = self.fake_llvm(oem_name('LLVM の 場所', 'LLVM é dossier', 'LLVM saved dir'))  # 空白と ASCII でない文字
         with open(self.root_file, 'w', encoding='oem', newline='\r\n') as f:
             f.write(llvm + '\n')
         r, read, calls = self.setup(answers=['', '', ''])  # 3 つとも空のまま Enter(登録の Y/n は Y)
