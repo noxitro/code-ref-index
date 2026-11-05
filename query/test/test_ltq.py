@@ -320,6 +320,34 @@ class LtqTest(unittest.TestCase):
         self.assertIn('inside comments -> not code; do not report these: 1\n    src/  1 matches in 1 files', out)
         self.assertNotIn('src/a.cpp:7', out)
 
+    def test_many_files_read_the_ranges_in_one_pass(self):
+        # 一致のあったファイルが SKIP_SCAN_FILES を超えると .skip.tsv を 1 回通して読む。1 つずつ引くときと結果が同じこと
+        names = [f'src/f{i}.cpp' for i in range(70)]  # f1 と f10 のように、別のファイルの名前を頭に含むものもある
+        rows, skips = list(self.COMMON), [self.COMMENT]
+        for i, n in enumerate(names):
+            self.write(n, 'void F() {\n  // Run\n#if 0\n  Run();\n#endif\n  Run();\n}\n', self.t0 - 10)
+            rows.append(('Run', 'call', 'F', f'{n}:6:3', 'Run();'))
+            skips += [(n, 'comment', '2:3', '2:9'), (n, 'inactive', '3:1', '5:7')]
+        skips.append(('src/unused.cpp', 'comment', '1:1', '1:9'))  # 一致の無いファイルの範囲は使わない
+        self.index('index', rows, skips, tus=['src/a.cpp'] + names)
+        skip = os.path.join(self.root, '.index', 'index.tsv.skip.tsv')
+        with open(skip, 'rb') as f:
+            data = f.read().replace(b'src/f7.cpp\tcomment\t2:3\t2:9\n', b'src/f7.cpp\tcomment\t2:3\t2:9\r\n')  # CRLF の行
+        with open(skip, 'wb') as f:
+            f.write(data)
+        os.utime(skip, (self.t0, self.t0))
+        saved = ltq.SKIP_SCAN_FILES
+        try:
+            ltq.SKIP_SCAN_FILES = 10 ** 9
+            one_by_one = self.ltq('refs', 'Run')
+            ltq.SKIP_SCAN_FILES = 64
+            one_pass = self.ltq('refs', 'Run')
+        finally:
+            ltq.SKIP_SCAN_FILES = saved
+        self.assertEqual(one_pass, one_by_one)
+        self.assertIn('inside comments -> not code; do not report these: 71', one_pass)
+        self.assertRegex(one_pass, r'inside inactive #if[^\n]*: 70')
+
     def test_root_is_found_from_a_subfolder(self):
         # --root を省くと、カレントから親へさかのぼって .index のあるフォルダを使う
         self.index('index', self.COMMON, [self.COMMENT])

@@ -21,6 +21,7 @@ TU_EXT = {'.c', '.cc', '.cpp', '.cxx', '.cppm', '.ixx', '.m', '.mm'}  # 単独�
 DEFS = ('def', 'decl')
 OVERRIDE = 'override'  # 3 列目は呼び出し元ではなく、上書きされる基底のメソッド
 CP_CODECS = {65001: None, 51932: 'euc_jp', 20932: 'euc_jp', 28591: 'latin-1'}  # ほかは cp<番号>
+SKIP_SCAN_FILES = 64  # 範囲を引くファイルがこれより多ければ、.skip.tsv を 1 つずつ find せず、1 回通して読む
 
 
 def cp_codec(cp):
@@ -286,7 +287,7 @@ class Index:
             sp = part.path + '.skip.tsv'
             if not os.path.exists(sp):
                 continue
-            if len(want) > 64:
+            if len(want) > SKIP_SCAN_FILES:
                 # ファイルが多いと、1 つずつ find するより、1 回通して読むほうが速い(コードベース C の 108 MB の .skip.tsv で、問い合わせ全体が 10 秒 -> 2.2 秒)
                 with open(sp, 'rb') as f:
                     lines = [x.rstrip(b'\r') for x in f.read().split(b'\n') if x[:x.find(b'\t')] in want]

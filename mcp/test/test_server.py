@@ -30,10 +30,30 @@ class ServerTest(unittest.TestCase):
             f.write(f'file\tok\terrors\tsec\trefs\tfirst_error\n{os.path.join(self.root, "src", "a.cpp")}\t1\t0\t0.1\t2\t\n')
         self.start(['--root', self.root])
 
-    def start(self, args, cwd=None):
+    def start(self, args, cwd=None, env=None):
+        e = {k: v for k, v in os.environ.items() if k != 'CRI_MAX_OUTPUT_BYTES'}
+        e.update(env or {})
         self.proc = subprocess.Popen([sys.executable, '-I', SERVER] + args, stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=cwd)
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, cwd=cwd, env=e)
         self.next_id = 0
+
+    def restart(self, args, env=None):
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        self.start(args, env=env)
+
+    def many_comments(self):
+        """コメント内の一致が 40 件ある索引にする。全文は約 1,700 バイト、短い形(--compact)は約 800 バイト。"""
+        with open(os.path.join(self.root, 'src', 'a.cpp'), 'w', encoding='utf-8', newline='\n') as f:
+            f.write('void Run();\nvoid Main() {\n  Run();\n' + '  // Run\n' * 40 + '}\n')
+        with open(os.path.join(self.root, '.index', 'index.tsv.skip.tsv'), 'w', encoding='utf-8', newline='\n') as f:
+            f.write('path\tkind\tbegin\tend\n' + ''.join(f'src/a.cpp\tcomment\t{4 + i}:3\t{4 + i}:9\n' for i in range(40)))
+        for p in ('index.tsv', 'index.tsv.skip.tsv', 'index.tsv.tu.tsv'):  # 索引をソースより新しくする(作り直しを避ける)
+            os.utime(os.path.join(self.root, '.index', p))
+
+    def refs_text(self):
+        return self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run'}})['result']['content'][0]['text']
 
     def tearDown(self):
         self.proc.stdin.close()
@@ -94,6 +114,28 @@ class ServerTest(unittest.TestCase):
         self.assertLessEqual(len(text.encode('utf-8')), 400)
         self.assertTrue(text.startswith('index: .index/index.tsv'))  # 先頭(索引の状態)は残す
         self.assertIn('output cut at 400 bytes', text)  # 短い形の中身は ltq のテストで確かめる
+
+    def test_compact_form_that_fits_is_not_cut(self):
+        # 全文が上限を超え、短い形なら収まるときは、短い形をそのまま返す(切らない)
+        self.many_comments()
+        self.restart(['--root', self.root, '--max-output-bytes', '1000'])
+        text = self.refs_text()
+        self.assertLessEqual(len(text.encode('utf-8')), 1000)
+        self.assertIn('(compact output:', text)
+        self.assertIn('call   src/a.cpp:3  [in Main]  | Run();', text)
+        self.assertIn('inside comments -> not code; do not report these: 40', text)
+        self.assertNotIn('output cut', text)
+
+    def test_limit_from_the_environment_and_zero_means_no_limit(self):
+        self.many_comments()
+        self.restart(['--root', self.root], env={'CRI_MAX_OUTPUT_BYTES': '1000'})
+        self.assertIn('(compact output:', self.refs_text())
+        # 0 なら全文のまま(コメント内の一致も 1 件ずつ出る)
+        self.restart(['--root', self.root, '--max-output-bytes', '0'], env={'CRI_MAX_OUTPUT_BYTES': '1000'})
+        text = self.refs_text()
+        self.assertNotIn('(compact output:', text)
+        self.assertIn('src/a.cpp:43', text)
+        self.assertGreater(len(text.encode('utf-8')), 1000)
 
     def test_root_is_found_from_a_subfolder(self):
         # --root を省き、ルートより下のフォルダで起動しても、親の .index を引く

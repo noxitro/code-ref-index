@@ -2,6 +2,9 @@
 - LLVM の場所が間違っているときに、ビルドに進まず、indexer/llvm-root.txt を書き換えないこと(pwsh だけで走る)
 - 通しで、索引・.index/.gitignore・使い方の指示ができ、Copilot CLI への登録を必要なときだけ行うこと
   (Visual Studio・LLVM・ビルド済みの ltidx.exe が要る。Copilot CLI は偽物の copilot.cmd に差し替えるので、本物の設定には触れない)
+- 引数無し(ダブルクリック)のときの問い合わせ: 空のまま Enter で前の LLVM の場所を使うこと、Y/n、
+  空白と日本語を含む LLVM の場所を build.bat(cmd の set /p)が読み戻せること
+  (一時フォルダに写した setup.ps1 と、偽物の build.bat・LLVM で確かめる。pwsh だけで走り、本物のビルドと llvm-root.txt には触れない)
 出力の文字コードは起動のしかたで変わるので、結果はファイルで確かめる。
 
 usage: python -I -m unittest discover -s scripts/test   (リポジトリのルートで)
@@ -123,6 +126,67 @@ class SetupFlowTest(SetupBase):
         calls = self.setup('-NoIndex', registered=r'D:\old\mcp\server.py')
         self.assertEqual(calls, ['mcp get code-ref-index'])
         self.assertFalse(os.path.exists(os.path.join(self.src, '.index')))
+
+
+# llvm-root.txt を本物の build.bat と同じく set /p で読み、LLVM に見えるかを read.txt に書く
+FAKE_BUILD = r'''@echo off
+set LLVM_ROOT=
+set /p LLVM_ROOT=<"%~dp0llvm-root.txt"
+if exist "%LLVM_ROOT%\lib\cmake\clang\ClangConfig.cmake" (echo ok>"%~dp0read.txt") else (echo ng>"%~dp0read.txt")
+exit /b 0
+'''
+
+
+@unittest.skipUnless(PWSH and os.name == 'nt', 'pwsh on Windows is required')
+class SetupPromptTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='cri セットアップ ')
+        self.repo = os.path.join(self.tmp, 'repo')
+        for d in ('scripts', 'indexer', 'mcp', 'bin'):
+            os.makedirs(os.path.join(self.repo, d))
+        shutil.copy(SCRIPT, os.path.join(self.repo, 'scripts'))
+        with open(os.path.join(self.repo, 'indexer', 'build.bat'), 'w', newline='\r\n') as f:
+            f.write(FAKE_BUILD)
+        open(os.path.join(self.repo, 'mcp', 'server.py'), 'w').close()
+        with open(os.path.join(self.repo, 'bin', 'copilot.cmd'), 'w', newline='\r\n') as f:
+            f.write(FAKE_COPILOT)
+        self.llvm = os.path.join(self.tmp, 'LLVM の 場所')  # 空白と日本語
+        os.makedirs(os.path.join(self.llvm, 'lib', 'cmake', 'clang'))
+        open(os.path.join(self.llvm, 'lib', 'cmake', 'clang', 'ClangConfig.cmake'), 'w').close()
+        self.root_file = os.path.join(self.repo, 'indexer', 'llvm-root.txt')
+        self.log = os.path.join(self.tmp, 'copilot.log')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def answer(self, *lines):
+        """引数無しで起動し、問い合わせに lines を順に答える。偽物の copilot に渡った引数を返す。"""
+        e = {k: v for k, v in os.environ.items() if k.upper() != 'LLVM_ROOT'}
+        e.update({'PATH': os.path.join(self.repo, 'bin') + os.pathsep + os.environ['PATH'], 'FAKE_COPILOT_LOG': self.log})
+        r = subprocess.run([PWSH, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                            os.path.join(self.repo, 'scripts', 'setup.ps1')],
+                           input=''.join(x + '\n' for x in lines), capture_output=True, text=True, errors='replace', env=e)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        with open(os.path.join(self.repo, 'indexer', 'read.txt')) as f:
+            self.assertEqual(f.read().strip(), 'ok')  # build.bat が llvm-root.txt から LLVM を読み戻せた
+        with open(self.root_file, encoding='oem') as f:
+            self.assertEqual(f.read(), self.llvm + '\n')
+        with open(self.log, encoding='oem') as f:
+            return f.read().splitlines()
+
+    def test_typed_path_with_quotes_and_no_registration(self):
+        # LLVM の場所(引用符と末尾の \ 付き)、ルートは空で索引を飛ばす、登録は n
+        calls = self.answer(f'"{self.llvm}\\"', '', 'n')
+        self.assertEqual(calls, ['mcp get code-ref-index'])
+        self.assertFalse(os.path.exists(os.path.join(self.repo, '.index')))
+
+    def test_empty_enter_reuses_the_saved_path_and_registers_by_default(self):
+        with open(self.root_file, 'w', encoding='oem', newline='\r\n') as f:
+            f.write(self.llvm + '\n')
+        calls = self.answer('', '', '')  # 3 つとも空のまま Enter(登録の Y/n は Y)
+        server = os.path.realpath(os.path.join(self.repo, 'mcp', 'server.py'))
+        self.assertEqual(calls[0], 'mcp get code-ref-index')
+        self.assertIn(f'mcp add code-ref-index -- python -I "{server}"', calls)
 
 
 if __name__ == '__main__':

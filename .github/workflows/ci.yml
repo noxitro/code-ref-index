@@ -64,3 +64,9 @@ jobs:
       - name: Test make-cdb / index-project
         shell: cmd
         run: scripts\test\run_test.bat
+      # 索引の自動更新のテストは ltidx.exe が要るので、ltq / MCP のジョブでは飛ばされる。ここで流し、飛ばさせない
+      - name: Test the auto-update of the MCP server
+        shell: cmd
+        env:
+          CRI_REQUIRE_LTIDX: '1'
+        run: python -I -W error::ResourceWarning -m unittest discover -s mcp/test -v

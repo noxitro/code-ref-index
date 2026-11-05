@@ -104,9 +104,9 @@ Copilot CLI は、許可リストに無い MCP サーバーの初期化時の説
 
 ## テスト
 
-`test\run_test.bat` をダブルクリックします。`server.py` を子プロセスで起動し、合成した小さな索引に対して `initialize`・`tools/list`・`tools/call`(`refs`・`check`)と誤った要求を JSON-RPC で送り、返事を確かめます。Copilot は要りません。
+`test\run_test.bat` をダブルクリックします。`server.py` を子プロセスで起動し、合成した小さな索引に対して `initialize`・`tools/list`・`tools/call`(`refs`・`check`)と誤った要求を JSON-RPC で送り、返事を確かめます。結果の大きさの上限(短い形で収まればそれを返し、収まらなければ切ること、環境変数 `CRI_MAX_OUTPUT_BYTES`、0 なら切らないこと)も確かめます。Copilot は要りません。
 
-`ltidx.exe` をビルド済みなら、自動更新も確かめます(`test_autoupdate.py`)。小さなプロジェクトを索引にしてからソースを変え、次の呼び出しで作り直されること、TU を足すと拾うこと、待たない設定でも次の呼び出しで新しい索引を使うこと、記録の無い索引には触らないこと、失敗を繰り返さないことです。
+`ltidx.exe` をビルド済みなら、自動更新も確かめます(`test_autoupdate.py`)。小さなプロジェクトを索引にしてからソースを変え、次の呼び出しで作り直されること、TU を足すと拾うこと、待たない設定でも次の呼び出しで新しい索引を使うこと、記録の無い索引には触らないこと、失敗を繰り返さないことです。GitHub Actions では、ltidx をビルドするジョブでこれを流します(`CRI_REQUIRE_LTIDX=1` を付け、`ltidx.exe` が無ければ飛ばさずに失敗させます)。
 
 ## 制約
 

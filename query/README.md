@@ -62,4 +62,4 @@ ltq --index D:\idx\game.tsv --root D:\src\game refs Renderer::Draw
 
 ## テスト
 
-`test\run_test.bat` をダブルクリックします(合成した小さな索引で、構成の統合・行の付け直し・鮮度の表示・仮想関数の上書き・Shift_JIS のソースを確かめます。LLVM は要りません)。リポジトリのルートの `run-tests.bat` は、ほかのテストもまとめて流します。
+`test\run_test.bat` をダブルクリックします(合成した小さな索引で、構成の統合・行の付け直し・鮮度の表示・仮想関数の上書き・Shift_JIS のソース・短い形(`--compact`)・一致のあったファイルが多いときの範囲の読み方を確かめます。LLVM は要りません)。リポジトリのルートの `run-tests.bat` は、ほかのテストもまとめて流します。

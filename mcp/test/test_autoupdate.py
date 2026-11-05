@@ -17,7 +17,8 @@ SERVER = os.path.join(HERE, '..', 'server.py')
 LTIDX = os.environ.get('LTIDX') or os.path.join(HERE, '..', '..', 'indexer', 'build', 'ltidx.exe')
 
 
-@unittest.skipUnless(os.path.exists(LTIDX), 'ltidx.exe is not built')
+# CRI_REQUIRE_LTIDX=1(CI の ltidx のジョブ)のときは飛ばさず、ltidx.exe が無ければ失敗させる
+@unittest.skipUnless(os.path.exists(LTIDX) or os.environ.get('CRI_REQUIRE_LTIDX'), 'ltidx.exe is not built')
 class AutoUpdateTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix='cri')

@@ -284,6 +284,30 @@ class LtidxTest(unittest.TestCase):
         rc, err = self.run_ltidx('-update')
         self.assertNotIn('own.bin', err)
 
+    def test_update_with_broken_provenance(self):
+        # 壊れた .own.bin(途中で切れた・後ろに余りがある・形式の印が違う)を読み込まずに、出どころが無いときと同じく前回の行を残す
+        self.write('h.h', '#pragma once\ntemplate <class T> void Each(T t) { t.Draw(); }\n')
+        self.write('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { Each(a); }\n', [])
+        self.write('b.cpp', '#include "h.h"\nstruct B { void Draw(); };\nvoid UseB(B b) { Each(b); }\n', [])
+        own = os.path.join(self.root, '.index', 'index.tsv.own.bin')
+        for name, damage, why in (('cut', lambda d: d[:-5], '壊れている'),
+                                  ('extra', lambda d: d + b'\0', '壊れている'),
+                                  ('magic', lambda d: b'X' + d[1:], '形式が違う')):
+            with self.subTest(name):
+                self.write('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { Each(a); }\n', [])
+                rc, err = self.run_ltidx()
+                self.assertEqual(rc, 0, err)
+                with open(own, 'rb') as f:
+                    data = f.read()
+                with open(own, 'wb') as f:
+                    f.write(damage(data))
+                self.touch_later('a.cpp', '#include "h.h"\nstruct A { void Draw(); };\nvoid UseA(A a) { a.Draw(); }\n')
+                rc, err = self.run_ltidx('-update')
+                self.assertEqual(rc, 0, err)
+                self.assertIn(f'index.tsv.own.bin)が{why}', err)
+                self.assertTrue(self.has('A::Draw', 'call', 'h.h:2:39'))  # 古い行が残る
+                self.assertTrue(self.has('A::Draw', 'call', 'a.cpp:3:20'))  # 変えた TU は作り直されている
+
     def test_replace_while_open(self):
         # 索引のどれかが開かれている間は差し替えを待つ。開いたままなら、新旧を混ぜずに前の索引を残す
         self.write('a.cpp', 'void A() {}\n', [])
