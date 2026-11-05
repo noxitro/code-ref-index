@@ -23,6 +23,8 @@ set LLVM_ROOT=D:\llvm\clang+llvm-23.1.4-x86_64-pc-windows-msvc
 build.bat
 ```
 
+`llvm-root.txt` は cmd のコードページ(OEM)で読み書きします。LLVM の場所に日本語などがあり、コンソールのコードページを切り替えている(`chcp 65001`、pwsh のプロファイルで `[Console]::InputEncoding` を UTF-8 にしている など)ときは、`build.bat` が場所を読み違えて `LLVM not found` で止まります。その場合は、上のように環境変数 `LLVM_ROOT` を設定してから叩いてください(`setup.bat` からのビルドは環境変数で場所を渡すので、影響を受けません)。
+
 ## テスト
 
 `test\run_test.bat` をダブルクリックします。すべて通れば `PASS` と出ます(Python 3.10 以降が要ります)。
