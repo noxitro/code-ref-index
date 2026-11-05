@@ -109,6 +109,22 @@ class LtidxTest(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertEqual(sorted(self.tus()), ['a.cpp'])
 
+    def test_gcc_style_command_lines(self):
+        # gcc 形式(g++・clang++)の引数でも TU が通り、実体化されないテンプレートの中の呼び出しも載る。
+        # /Zc:twoPhase はファイル名に取られ、MSVC 向けの既定では gcc 形式でもテンプレートの解析を遅らせるので、
+        # 形式に合わせて -fno-delayed-template-parsing を足す
+        self.write('a.cpp', 'void Run();\ntemplate <class T> void Never(T) { Run(); }\n')
+        d = self.root.replace('\\', '/')
+        for argv in (['g++', '-c', '-std=c++03'], ['clang++', '-c', '-std=c++98'], ['clang-cl.exe', '/c'],
+                     ['clang', '--driver-mode=cl', '/c'], [r'C:\tools\cl.exe', '/c']):
+            with self.subTest(argv[0] + ' ' + argv[1]):
+                with open(os.path.join(self.root, 'compile_commands.json'), 'w', encoding='utf-8') as f:
+                    json.dump([{'directory': d, 'file': f'{d}/a.cpp', 'arguments': argv + ['a.cpp']}], f)
+                rc, err = self.run_ltidx()
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(self.tus()['a.cpp'][1], '1', self.tus()['a.cpp'])
+                self.assertTrue(self.has('Run', 'call', 'a.cpp:2:36'))
+
     def test_utf8_unchanged(self):
         self.write('a.cpp', SJIS_SRC, ['/utf-8'])
         rc, err = self.run_ltidx('-source-cp', '932')

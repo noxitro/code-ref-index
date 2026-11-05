@@ -61,7 +61,8 @@ static cl::opt<std::string> Out("o", cl::desc("出力 TSV"), cl::Required);
 static cl::opt<std::string> ResourceDir("resource-dir", cl::desc("clang の組み込みヘッダーの場所"), cl::init(LTIDX_RESOURCE_DIR));
 static cl::opt<unsigned> Jobs("j", cl::desc("並列数"), cl::init(4));
 static cl::opt<bool> NoInst("no-inst", cl::desc("テンプレートの暗黙の実体化を索引しない(比較用)"));
-static cl::opt<bool> Delayed("delayed", cl::desc("clang-cl 既定の遅延テンプレート解析のままにする(/Zc:twoPhase を足さない)"));
+static cl::opt<bool> Delayed("delayed", cl::desc("MSVC 向けの既定の遅延テンプレート解析のままにする"
+                                                 "(/Zc:twoPhase や -fno-delayed-template-parsing を足さない)"));
 static cl::opt<bool> NoDep("no-dep", cl::desc("テンプレート内の解決できない呼び出し(dep 行)を出さない"));
 static cl::opt<bool> Update("update", cl::desc("前回の索引の後に変わった TU だけを解析し直して差し替える"));
 static cl::opt<unsigned> SourceCp("source-cp", cl::desc("UTF-8 でないソースを読むコードページ(既定はこの PC の ANSI コードページ。"
@@ -69,6 +70,17 @@ static cl::opt<unsigned> SourceCp("source-cp", cl::desc("UTF-8 でないソー�
 static cl::list<std::string> Files(cl::Positional, cl::desc("[対象ファイル...](省略時は全 TU)"));
 
 namespace {
+
+// コマンドラインを clang-cl の形式(cl.exe・clang-cl・--driver-mode=cl)で読むか。clang の driver と同じく、
+// --driver-mode= が無ければ実行ファイルの名前で決める。gcc 形式では /Zc:twoPhase はファイル名に取られる
+bool isClDriver(const tooling::CommandLineArguments &A) {
+  for (const auto &S : A)
+    if (llvm::StringRef X(S); X.consume_front("--driver-mode="))
+      return X == "cl";
+  if (A.empty()) return false;
+  std::string Name = llvm::sys::path::stem(A[0]).lower();
+  return Name == "cl" || llvm::StringRef(Name).ends_with("clang-cl");
+}
 
 // 相対パスは、TU のコンパイルのディレクトリ(FileManager の作業ディレクトリ)から解決する
 std::string normalize(llvm::StringRef P, const FileManager *FM = nullptr) {
@@ -914,10 +926,13 @@ int main(int argc, const char **argv) {
       });
       Tool.appendArgumentsAdjuster(tooling::getInsertArgumentAdjuster(
           ("-resource-dir=" + ResourceDir).c_str(), tooling::ArgumentInsertPosition::BEGIN));
-      // 遅延解析のままだと、実体化されないテンプレート本体の非依存呼び出しが索引に載らない
+      // 遅延解析のままだと、実体化されないテンプレート本体の非依存呼び出しが索引に載らない。MSVC 向けでは
+      // gcc 形式(g++・clang++)の引数でも既定で遅延するので、どちらの形式でも止める
       if (!Delayed)
-        Tool.appendArgumentsAdjuster(
-            tooling::getInsertArgumentAdjuster("/Zc:twoPhase", tooling::ArgumentInsertPosition::END));
+        Tool.appendArgumentsAdjuster([](const tooling::CommandLineArguments &A, llvm::StringRef File) {
+          return tooling::getInsertArgumentAdjuster(isClDriver(A) ? "/Zc:twoPhase" : "-fno-delayed-template-parsing",
+                                                    tooling::ArgumentInsertPosition::END)(A, File);
+        });
       ErrorCounter Diag;
       Tool.setDiagnosticConsumer(&Diag);
       Factory F(Roots, O);
