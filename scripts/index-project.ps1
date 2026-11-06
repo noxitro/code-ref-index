@@ -63,7 +63,7 @@ if ($Update) {
 }
 $p = Start-Process -FilePath (Resolve-Path -LiteralPath $exe).Path -ArgumentList $ltidxArgs `
     -NoNewWindow -PassThru -RedirectStandardError "$Root\.index\$Name.log"
-$p.PriorityClass = 'Idle'
+try { $p.PriorityClass = 'Idle' } catch { }  # すぐ終わった(引数の誤りなど)ときは設定できない。終了コードは取れる
 $p.WaitForExit()
 Get-Content "$Root\.index\$Name.log" | Where-Object { $_ -notmatch '^\[' }  # TU ごとの進み具合を除く
 "{0} 秒。索引: {1}" -f [int]((Get-Date) - $t0).TotalSeconds, $out
