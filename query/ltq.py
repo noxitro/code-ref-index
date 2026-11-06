@@ -472,7 +472,8 @@ class Index:
                 print(f'    {p}  ({e})' + (f'  [{", ".join(ns)}]' if multi else ''))
             if len(items) > 10:
                 why = collections.Counter(e for (p, e), ns in items[10:])
-                print(f'    ... {len(items) - 10} more (all in {self.rel(self.parts[0].path)}.tu.tsv): '
+                where = ', '.join(f'{self.rel(part.path)}.tu.tsv' for part in self.parts)  # 構成ごとに 1 つ
+                print(f'    ... {len(items) - 10} more (all in {where}): '
                       + '; '.join(f'{n} x {e[:80]}' for e, n in why.most_common(3))
                       + ('; ...' if len(why) > 3 else ''))
         changed, new, missing = self.freshness()

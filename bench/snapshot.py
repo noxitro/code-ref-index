@@ -44,14 +44,17 @@ def rebase(cdb, old, new):
 def digest(root):
     # ルートの .snapshot-exclude に 1 行 1 つ書いたフォルダ(ルートからの相対パス)も除く。ビルドの出力(O3DE の build/ は 27 GB)など、
     # 計測のたびに読むには大きすぎ、問題の対象でもないもの。このファイルの無い写しの指紋は変わらない
+    def key(p):  # build/・./build・Build も同じフォルダ
+        return os.path.normcase(os.path.normpath(p))
+
     skip = set()
     ex = os.path.join(root, '.snapshot-exclude')
     if os.path.exists(ex):
-        with open(ex, encoding='utf-8') as f:
-            skip = {os.path.normcase(os.path.join(root, x.strip())) for x in f if x.strip() and not x.startswith('#')}
+        with open(ex, encoding='utf-8-sig') as f:
+            skip = {key(os.path.join(root, x.strip())) for x in f if x.strip() and not x.startswith('#')}
     files = []
     for d, dirs, names in os.walk(root):
-        dirs[:] = sorted(x for x in dirs if not x.startswith('.') and os.path.normcase(os.path.join(d, x)) not in skip)
+        dirs[:] = sorted(x for x in dirs if not x.startswith('.') and key(os.path.join(d, x)) not in skip)
         files += [os.path.join(d, x) for x in names if not x.startswith('.')]
     h = hashlib.sha256()
     for fp in sorted(files, key=lambda p: os.path.relpath(p, root).replace('\\', '/').lower()):

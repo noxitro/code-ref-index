@@ -39,14 +39,20 @@ function Write-LspJson {
     $j | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 "$ws\.github\lsp.json"
 }
 
-# 条件ごとの設定を作業フォルダに置く(他の条件の物は消す)
-foreach ($p in "$ws\.github", "$ws\.index", "$ws\.mcp.json", "$ws\compile_commands.json") { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+# 条件ごとの設定を作業フォルダに置く(他の条件の物は消す)。ルートの compile_commands.json は、条件 S・Y が置いたもの
+# (目印 .cri-bench-cdb がある)だけを消す。写しに元からあるものは解析対象の一部なので残す
+$cdbMark = "$ws\.cri-bench-cdb"
+foreach ($p in "$ws\.github", "$ws\.index", "$ws\.mcp.json") { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+if (Test-Path $cdbMark) { Remove-Item -Force "$ws\compile_commands.json", $cdbMark -ErrorAction SilentlyContinue }
 switch ($Cond) {
     { $_ -in 'S', 'Y' } {
         # Serena(既定の REPL の形)を作業フォルダの .mcp.json に登録する。clangd はルートの compile_commands.json を読むので、
         # 実行の間だけ置く(写しの指紋に入るので、実行の後に消す)。Serena と clangd の索引(.serena・.cache)は消さずに使い回す
         if (-not $Serena -or -not (Test-Path "$Serena\bin\serena.exe")) { throw 'set -Serena (or CRI_BENCH_SERENA)' }
-        Copy-Item "$ws\.cdb\compile_commands.json" "$ws\compile_commands.json"
+        if (-not (Test-Path "$ws\compile_commands.json")) {
+            Copy-Item "$ws\.cdb\compile_commands.json" "$ws\compile_commands.json"
+            New-Item -ItemType File $cdbMark | Out-Null
+        }
         if ($Cond -eq 'Y') {
             New-Item -ItemType Directory "$ws\.github" | Out-Null
             Copy-Item "$bench\serena-instructions.md" "$ws\.github\copilot-instructions.md"
@@ -90,7 +96,8 @@ switch ($Cond) {
         # 段階 3 の MCP。作業フォルダの .mcp.json に登録する(F は指示なし、G・H は指示あり)。シェルは渡さない
         New-Item -ItemType Directory "$ws\.github", "$ws\.index" | Out-Null
         if ($Cond -in 'G', 'H') { Copy-Item "$bench\mcp-instructions.md" "$ws\.github\copilot-instructions.md" }
-        # 自動更新には .deps.tsv・.own.bin と作り方の記録(.recipe.json)が要る。記録はこの作業フォルダ向けに作る
+        # 自動更新には .deps.tsv・.own.bin と作り方の記録(.recipe.json)が要る。記録はこの作業フォルダ向けに作る。
+        # ハードリンクにはしない(自動更新が索引の時刻を進め、作り直すと、リンク先の元の索引まで変わる)
         foreach ($s in '', '.tu.tsv', '.skip.tsv', '.deps.tsv', '.own.bin') {
             if (Test-Path "$IndexDir\$Index$s") { Copy-Item "$IndexDir\$Index$s" "$ws\.index\index.tsv$s" }
         }
@@ -149,7 +156,7 @@ try {
     while ((Test-Path "$ws\.index\update.lock") -and (Get-Date) -lt $deadline) {
         try { Remove-Item "$ws\.index\update.lock" -ErrorAction Stop } catch { Start-Sleep -Milliseconds 500 }
     }
-    if ($Cond -in 'S', 'Y') { Remove-Item "$ws\compile_commands.json" -ErrorAction SilentlyContinue }
+    if (Test-Path $cdbMark) { Remove-Item -Force "$ws\compile_commands.json", $cdbMark -ErrorAction SilentlyContinue }
     [array]::Reverse($saved)  # 同じファイルを何度も書き換えたときは、最初の中身に戻す
     foreach ($x in $saved) {
         [IO.File]::WriteAllBytes($x[0], $x[1])

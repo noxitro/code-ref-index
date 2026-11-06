@@ -44,7 +44,14 @@ try {
         catch { throw "今の ltidx を差し替えられません(使用中かもしれません。Copilot CLI を終えてからやり直してください): $Dest" }
     }
     New-Item -ItemType Directory (Split-Path $Dest) -Force | Out-Null
-    Rename-Item -LiteralPath $new -NewName (Split-Path $Dest -Leaf)
+    try { Rename-Item -LiteralPath $new -NewName (Split-Path $Dest -Leaf) }
+    catch {
+        # 新しいものを置けなかったら前のものに戻す(ltidx の無い状態で終えない)
+        if ((Test-Path -LiteralPath $old) -and -not (Test-Path -LiteralPath $Dest)) {
+            Rename-Item -LiteralPath $old -NewName (Split-Path $Dest -Leaf) -ErrorAction SilentlyContinue
+        }
+        throw
+    }
     if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
     $v = (Get-Content -Raw -LiteralPath (Join-Path $Dest 'version.txt') -ErrorAction SilentlyContinue)
     "ltidx を置きました: $(Join-Path $Dest 'ltidx.exe')(版 $("$v".Trim()))"

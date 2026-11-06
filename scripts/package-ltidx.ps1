@@ -20,7 +20,8 @@ if (-not $LlvmRoot) {
 }
 if (-not $LlvmRoot) { throw 'LLVM の場所を -LlvmRoot か環境変数 LLVM_ROOT で指定してください(ltidx をビルドした LLVM)' }
 $clang = Get-ChildItem -LiteralPath (Join-Path $LlvmRoot 'lib\clang') -Directory -ErrorAction SilentlyContinue |
-    Sort-Object Name | Select-Object -Last 1
+    Sort-Object { $n = 0; [void][int]::TryParse(($_.Name -split '\.')[0], [ref]$n); $n }, Name |  # 9 より 23 が新しい
+    Select-Object -Last 1
 if (-not $clang -or -not (Test-Path -LiteralPath (Join-Path $clang.FullName 'include'))) {
     throw "clang の組み込みヘッダーがありません: $LlvmRoot\lib\clang\<版>\include"
 }

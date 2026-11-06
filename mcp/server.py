@@ -85,6 +85,16 @@ TOOLS = [
 ]
 
 
+def yaml_scalar(v):
+    """1 行の YAML のスカラー。'...' は '' を ' に、"..." は \\ の後の文字をそのまま、引用符の無いものはそのまま
+    (パスに ' があると単一引用符で書かれる)。"""
+    if len(v) >= 2 and v[0] == v[-1] == "'":
+        return v[1:-1].replace("''", "'")
+    if len(v) >= 2 and v[0] == v[-1] == '"':
+        return re.sub(r'\\(.)', r'\1', v[1:-1])
+    return v
+
+
 def session_cwd():
     """Copilot CLI のセッションの作業フォルダ。COPILOT_AGENT_SESSION_ID のセッションの記録
     (<COPILOT_HOME か ~/.copilot>/session-state/<id>/workspace.yaml の cwd)から読む。公開の仕様ではない
@@ -97,7 +107,7 @@ def session_cwd():
         with open(os.path.join(home, 'session-state', sid, 'workspace.yaml'), encoding='utf-8') as f:
             for line in f:
                 if line.startswith('cwd:'):
-                    v = line[4:].strip().strip('\'"')
+                    v = yaml_scalar(line[4:].strip())
                     return v if os.path.isdir(v) else None
     except OSError:
         pass
@@ -124,7 +134,8 @@ class Config:
     def resolve(self, start=None):
         """(ルート, 注記)。--root が無ければ、start(ツールの引数の root)か作業フォルダ(workspace())から
         親へさかのぼって索引のあるフォルダを探す。呼ばれるたびに探すので、サーバーの起動後に作った索引も拾う。"""
-        cwd = os.path.abspath(start) if start else workspace()
+        # 相対の root は、サーバーの作業フォルダ(プラグインならプラグインの場所)ではなく、作業中のフォルダから解決する
+        cwd = os.path.normpath(os.path.join(workspace(), start)) if start else workspace()
         root = self.fixed or (None if self.index else ltq.find_root(cwd)) or cwd
         note = ''
         if not self.fixed and os.path.normcase(root) != os.path.normcase(cwd):
@@ -143,13 +154,19 @@ def run_ltq(cfg, args, start=None):
             idx, up = autoupdate.refresh(idx, paths, root, cfg.wait)
             note += up
     elif not cfg.index:
-        # 索引の無いリポジトリ。プラグインとして入れたときは scripts が見つけにくいので、作り方を絶対パスで添える
-        index_project = os.path.join(autoupdate.SCRIPTS, 'index-project.bat')
-        note += ('No cxxref index in this repository; search with rg as usual. To build one (it takes minutes; ask the '
-                 f'user first): "{index_project}" -Root "{root}"'
-                 + ('' if autoupdate.find_ltidx() else
-                    f' (first run "{os.path.join(autoupdate.SCRIPTS, "get-ltidx.bat")}" once to get ltidx.exe)')
-                 + '\n')
+        plugin = os.environ.get('PLUGIN_ROOT')
+        if not start and plugin and os.path.normcase(root) == os.path.normcase(os.path.abspath(plugin)):
+            # 作業中のフォルダが分からず、プラグインの場所を見ている。プラグイン自身の索引づくりを勧めない
+            note += ('The server could not tell which folder you are working in (it runs in the plugin folder). '
+                     'Call again with `root` set to the absolute path of your workspace.\n')
+        else:
+            # 索引の無いリポジトリ。プラグインとして入れたときは scripts が見つけにくいので、作り方を絶対パスで添える
+            index_project = os.path.join(autoupdate.SCRIPTS, 'index-project.bat')
+            note += ('No cxxref index in this repository; search with rg as usual. To build one (it takes minutes; ask '
+                     f'the user first): "{index_project}" -Root "{root}"'
+                     + ('' if autoupdate.find_ltidx() else
+                        f' (first run "{os.path.join(autoupdate.SCRIPTS, "get-ltidx.bat")}" once to get ltidx.exe)')
+                     + '\n')
 
     def run(extra):
         out = io.StringIO()
@@ -172,8 +189,14 @@ def run_ltq(cfg, args, start=None):
     return code, text
 
 
+class UnknownTool(Exception):
+    pass
+
+
 def call_tool(cfg, name, a):
     if name == 'refs':
+        if not a.get('name'):
+            return 2, 'refs needs "name" (a qualified name or a suffix of it)'
         args = ['refs', str(a['name'])]
         if a.get('limit'):
             args += ['--limit', str(int(a['limit']))]
@@ -187,8 +210,9 @@ def call_tool(cfg, name, a):
             return 2, 'no locations'
         args = ['check'] + [str(x) for x in locs]
     else:
-        raise KeyError(name)
-    return run_ltq(cfg, args, a.get('root') or None)
+        raise UnknownTool(name)
+    root = a.get('root')
+    return run_ltq(cfg, args, str(root) if root else None)
 
 
 def handle(msg, cfg):
@@ -205,7 +229,7 @@ def handle(msg, cfg):
         p = msg.get('params') or {}
         try:
             code, text = call_tool(cfg, p.get('name'), p.get('arguments') or {})
-        except KeyError:
+        except UnknownTool:
             raise RpcError(-32602, f'unknown tool: {p.get("name")}')
         except Exception as e:  # 索引の読み込み失敗など。ツールの誤りとして返す
             code, text = 1, f'{type(e).__name__}: {e}'

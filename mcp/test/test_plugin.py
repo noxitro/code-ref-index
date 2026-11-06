@@ -76,6 +76,10 @@ class PluginTest(unittest.TestCase):
         if node:
             r = subprocess.run([node, '--check', ext], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
+            # SDK に依らない部分(プラグインの場所・ltidx の探し方・作業フォルダ・ルート)の単体テスト
+            r = subprocess.run([node, '--test', os.path.join(os.path.dirname(ext), 'lib.test.mjs')],
+                               capture_output=True, text=True, encoding='utf-8', errors='replace')
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == '__main__':

@@ -361,6 +361,10 @@ class LtqTest(unittest.TestCase):
         self.assertIn('12 TU had parse errors', out)
         self.assertEqual(len([l for l in out.splitlines() if l.startswith('    src/bad')]), 10)
         self.assertIn('... 2 more (all in .index/index.tsv.tu.tsv)', out)
+        # 構成が複数なら、最初の構成の .tu.tsv だけを挙げない
+        self.index('release', self.COMMON, [self.COMMENT])
+        out = self.ltq('refs', 'Run')
+        self.assertIn('(all in .index/index.tsv.tu.tsv, .index/release.tsv.tu.tsv)', out)
 
     def test_root_is_found_from_a_subfolder(self):
         # --root を省くと、カレントから親へさかのぼって .index のあるフォルダを使う

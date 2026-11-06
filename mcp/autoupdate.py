@@ -27,14 +27,18 @@ def find_ltidx():
     プラグインとして入れた写しにはビルドしたものが無いので、配布物を使う。"""
     if os.environ.get('LTIDX'):
         return os.environ['LTIDX']
-    for p in (os.path.join(HERE, '..', 'indexer', 'build', 'ltidx.exe'),
-              os.path.join(os.environ.get('LOCALAPPDATA', ''), 'cxxref', 'ltidx', 'ltidx.exe')):
+    cands = [os.path.join(HERE, '..', 'indexer', 'build', 'ltidx.exe')]
+    if os.environ.get('LOCALAPPDATA'):  # 無ければ探さない(作業フォルダからの相対パスにしない)
+        cands.append(os.path.join(os.environ['LOCALAPPDATA'], 'cxxref', 'ltidx', 'ltidx.exe'))
+    for p in cands:
         if os.path.exists(p):
             return os.path.normpath(p)
     return None
 
 
 def no_ltidx():
+    if os.environ.get('LTIDX'):  # 取ってきても直らない
+        return f'ltidx.exe not found at LTIDX={os.environ["LTIDX"]}; fix or unset the LTIDX environment variable'
     return f'ltidx.exe not found; run {os.path.join(SCRIPTS, "get-ltidx.bat")} once (or build it with indexer\\build.bat)'
 
 

@@ -17,4 +17,4 @@ target_compile_definitions(ltidx PRIVATE ${LLVM_DEFINITIONS}
   LTIDX_RESOURCE_DIR="${LLVM_LIBRARY_DIR}/clang/${LLVM_VERSION_MAJOR}")
 target_compile_options(ltidx PRIVATE /utf-8
   $<$<COMPILE_LANGUAGE:CXX>:/GR- /wd4141 /wd4146 /wd4244 /wd4267 /wd4291 /wd4624 /wd4805>)
-target_link_libraries(ltidx PRIVATE clangTooling clangIndex clangFrontend clangAST clangBasic)
+target_link_libraries(ltidx PRIVATE clangTooling clangIndex clangFrontend clangDriver clangAST clangBasic)

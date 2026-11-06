@@ -53,6 +53,12 @@ bool codepageToUtf8(unsigned Cp, const char *P, size_t N, std::string &Out);  //
 unsigned ansiCodepage();
 std::string shortPath(const std::string &P);  // 8.3 形式の短い名前(取れなければそのまま)
 
+// clang/Driver/Driver.h の宣言と同じ(ヘッダーを読むと Options.inc のマクロがぶつかるので、使う 2 つだけを宣言する。clangDriver にある)
+namespace clang::driver {
+llvm::StringRef getDriverMode(llvm::StringRef ProgName, llvm::ArrayRef<const char *> Args);
+bool IsClangCL(llvm::StringRef DriverMode);
+}  // namespace clang::driver
+
 using namespace clang;
 namespace cl = llvm::cl;
 
@@ -72,16 +78,17 @@ static cl::list<std::string> Files(cl::Positional, cl::desc("[対象ファイル
 
 namespace {
 
-// コマンドラインを clang-cl の形式(cl.exe・clang-cl・--driver-mode=cl)で読むか。clang の driver と同じく、
-// --driver-mode= が無ければ実行ファイルの名前で決める。gcc 形式では /Zc:twoPhase はファイル名に取られる
+// コマンドラインを clang-cl の形式(cl.exe・clang-cl・clang-cl-17・--driver-mode=cl)で読むか。clang の driver と
+// 同じ関数で決める(最後の --driver-mode=、無ければ実行ファイルの名前)。gcc 形式では /Zc:twoPhase はファイル名に取られる
 bool isClDriver(const tooling::CommandLineArguments &A) {
-  for (const auto &S : A)
-    if (llvm::StringRef X(S); X.consume_front("--driver-mode="))
-      return X == "cl";
   if (A.empty()) return false;
-  std::string Name = llvm::sys::path::stem(A[0]).lower();
-  return Name == "cl" || llvm::StringRef(Name).ends_with("clang-cl");
+  std::vector<const char *> Argv;
+  for (const auto &S : A) Argv.push_back(S.c_str());
+  return driver::IsClangCL(driver::getDriverMode(A[0], llvm::ArrayRef<const char *>(Argv).drop_front()));
 }
+
+// getMainExecutable に渡す、この実行ファイルの中の関数のアドレス(main のアドレスは C++ では使えない)
+void executableAnchor() {}
 
 // 相対パスは、TU のコンパイルのディレクトリ(FileManager の作業ディレクトリ)から解決する
 std::string normalize(llvm::StringRef P, const FileManager *FM = nullptr) {
@@ -842,7 +849,7 @@ int main(int argc, const char **argv) {
   // 配布物(LLVM 無しで使う)は、組み込みヘッダーを ltidx.exe の隣の lib\clang\<版> に置く。あればビルドした LLVM の場所より優先する
   if (!ResourceDir.getNumOccurrences()) {
     llvm::SmallString<256> Bundled(llvm::sys::path::parent_path(
-        llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&main))));
+        llvm::sys::fs::getMainExecutable(argv[0], reinterpret_cast<void *>(&executableAnchor))));
     llvm::sys::path::append(Bundled, "lib", "clang", llvm::sys::path::filename(LTIDX_RESOURCE_DIR));
     if (llvm::sys::fs::is_directory(Bundled + "/include")) ResourceDir = std::string(Bundled);
   }

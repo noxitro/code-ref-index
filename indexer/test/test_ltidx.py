@@ -167,8 +167,10 @@ class LtidxTest(unittest.TestCase):
         # 形式に合わせて -fno-delayed-template-parsing を足す
         self.write('a.cpp', 'void Run();\ntemplate <class T> void Never(T) { Run(); }\n')
         d = self.root.replace('\\', '/')
+        # 形式は clang の driver と同じ決め方(最後の --driver-mode=、無ければ版の付いた名前も含めて実行ファイルの名前)
         for argv in (['g++', '-c', '-std=c++03'], ['clang++', '-c', '-std=c++98'], ['clang-cl.exe', '/c'],
-                     ['clang', '--driver-mode=cl', '/c'], [r'C:\tools\cl.exe', '/c']):
+                     ['clang', '--driver-mode=cl', '/c'], [r'C:\tools\cl.exe', '/c'], ['clang-cl-17', '/c'],
+                     ['clang', '--driver-mode=g++', '--driver-mode=cl', '/c']):
             with self.subTest(argv[0] + ' ' + argv[1]):
                 with open(os.path.join(self.root, 'compile_commands.json'), 'w', encoding='utf-8') as f:
                     json.dump([{'directory': d, 'file': f'{d}/a.cpp', 'arguments': argv + ['a.cpp']}], f)

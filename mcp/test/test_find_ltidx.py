@@ -35,6 +35,24 @@ class FindLtidxTest(unittest.TestCase):
         os.makedirs(os.path.dirname(p), exist_ok=True)
         open(p, 'w').close()
 
+    def test_missing_localappdata_is_not_searched_relative_to_cwd(self):
+        # LOCALAPPDATA が無いとき、配布物の場所を作業フォルダからの相対パス(cxxref/ltidx/ltidx.exe)で探さない
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.tmp)
+            self.touch(os.path.join(self.tmp, 'cxxref', 'ltidx', 'ltidx.exe'))
+            e = {k: v for k, v in os.environ.items() if k not in ('LTIDX', 'LOCALAPPDATA')}
+            with mock.patch.object(autoupdate, 'HERE', self.plugin), mock.patch.dict(os.environ, e, clear=True):
+                self.assertIsNone(autoupdate.find_ltidx())
+        finally:
+            os.chdir(cwd)
+
+    def test_missing_ltidx_variable_message(self):
+        # LTIDX が無いファイルを指すときは、get-ltidx ではなく LTIDX を直すよう知らせる(取ってきても直らない)
+        with mock.patch.dict(os.environ, {'LTIDX': r'D:\x\ltidx.exe'}):
+            self.assertIn('LTIDX', autoupdate.no_ltidx())
+            self.assertNotIn('get-ltidx', autoupdate.no_ltidx())
+
     def test_order(self):
         self.assertIsNone(self.find())
         self.touch(self.got)

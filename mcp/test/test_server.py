@@ -139,6 +139,59 @@ class ServerTest(unittest.TestCase):
             shutil.rmtree(plugin)
             self.start(['--root', self.root])  # tearDown が閉じる
 
+    def as_plugin(self, session_cwd=None, quote=False):
+        """プラグインとして起動したサーバー(作業フォルダが PLUGIN_ROOT)にする。session_cwd を渡すと Copilot のセッションの記録を置く。
+        終わったら restore_default() を呼ぶ。戻り値はプラグインのフォルダ(消すのは restore_default)。"""
+        plugin = tempfile.mkdtemp(prefix='cri')
+        home = os.path.join(plugin, 'home')
+        env = {'PLUGIN_ROOT': plugin, 'COPILOT_HOME': home, 'COPILOT_AGENT_SESSION_ID': 'abc-123'}
+        if session_cwd:
+            os.makedirs(os.path.join(home, 'session-state', 'abc-123'))
+            v = "'" + session_cwd.replace("'", "''") + "'" if quote else session_cwd  # YAML の単一引用符
+            with open(os.path.join(home, 'session-state', 'abc-123', 'workspace.yaml'), 'w', encoding='utf-8') as f:
+                f.write(f'id: abc-123\ncwd: {v}\n')
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        self.start([], cwd=plugin, env=env)
+        self._plugin = plugin
+        return plugin
+
+    def restore_default(self):
+        self.proc.stdin.close()
+        self.proc.wait(timeout=10)
+        self.proc.stdout.close()
+        shutil.rmtree(self._plugin)
+        self.start(['--root', self.root])  # tearDown が閉じる
+
+    def test_relative_root_and_quoted_session_cwd(self):
+        # 相対の root は、プラグインの場所ではなく作業中のフォルダから解決する。セッションの記録の cwd は YAML の引用符を外す
+        parent = os.path.dirname(self.root)
+        self.as_plugin(parent, quote=True)
+        try:
+            r = self.send('tools/call', {'name': 'refs', 'arguments': {'name': 'Run', 'root': os.path.basename(self.root)}})
+            self.assertIn('call   src/a.cpp:3  [in Main]', r['result']['content'][0]['text'])
+        finally:
+            self.restore_default()
+
+    def test_unknown_workspace_does_not_suggest_indexing_the_plugin(self):
+        # 作業中のフォルダが分からない(セッションの記録が無い)ときは、プラグインの場所の索引づくりを勧めず、root を渡させる
+        plugin = self.as_plugin()
+        try:
+            text = self.refs_text()
+            self.assertIn('could not tell which folder you are working in', text)
+            self.assertNotIn(f'-Root "{plugin}"', text)
+        finally:
+            self.restore_default()
+
+    def test_refs_without_name_is_a_tool_error(self):
+        # 引数の足りない呼び出しは、「未知のツール」(JSON-RPC の誤り)ではなく、ツールの誤りとして返す
+        r = self.send('tools/call', {'name': 'refs', 'arguments': {'root': self.root}})
+        self.assertNotIn('error', r)
+        self.assertTrue(r['result']['isError'])
+        self.assertIn('needs "name"', r['result']['content'][0]['text'])
+        self.assertIn('error', self.send('tools/call', {'name': 'nope', 'arguments': {}}))  # 本当に未知のツール
+
     def test_root_argument(self):
         # 作業フォルダが分からないクライアント向けに、ツールの引数 root でルートを渡せる
         elsewhere = tempfile.mkdtemp(prefix='cri')

@@ -34,10 +34,14 @@ $Cdb = (Resolve-Path $Cdb).Path
 if (-not (Test-Path "$Cdb\compile_commands.json")) { throw "compile_commands.json not found in $Cdb" }
 # ltidx.exe は、環境変数 LTIDX、このリポジトリでビルドしたもの、配布物を取ってきたもの(get-ltidx)の順に探す(mcp\autoupdate.py と同じ)
 $exe = if ($env:LTIDX) { $env:LTIDX } else {
-    @((Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe'), (Join-Path "$env:LOCALAPPDATA" 'cxxref\ltidx\ltidx.exe')) |
+    @((Join-Path $PSScriptRoot '..\indexer\build\ltidx.exe')) +
+        @(if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA 'cxxref\ltidx\ltidx.exe' }) |
         Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
 }
-if (-not $exe -or -not (Test-Path -LiteralPath $exe)) {
+if ($env:LTIDX -and -not (Test-Path -LiteralPath $env:LTIDX)) {
+    throw "環境変数 LTIDX の ltidx.exe がありません: $env:LTIDX(LTIDX を直すか消してください)"
+}
+if (-not $exe) {
     throw "ltidx.exe not found. Run $(Join-Path $PSScriptRoot 'get-ltidx.bat') once (or build it with indexer\build.bat)."
 }
 
@@ -63,5 +67,12 @@ $p.PriorityClass = 'Idle'
 $p.WaitForExit()
 Get-Content "$Root\.index\$Name.log" | Where-Object { $_ -notmatch '^\[' }  # TU ごとの進み具合を除く
 "{0} 秒。索引: {1}" -f [int]((Get-Date) - $t0).TotalSeconds, $out
-if ($p.ExitCode -eq 2) { "索引を作れませんでした(.index\$Name.log を見てください)。前の索引はそのまま残っています" }
-elseif ($p.ExitCode -ne 0) { "解析にエラーのあった TU があります(.index\$Name.tsv.tu.tsv の ok=0)。その TU だけにある参照は索引に入りません" }
+# ltidx の終了コード: 0 = すべての TU が通った、1 = 解析にエラーのあった TU がある(索引はできている)、それ以外 = 作れなかった
+# (2、または STATUS_STACK_OVERFLOW などの異常終了)。このスクリプトは、索引ができたら 0、できなければ 2 で終える(/cxxref-index が見る)
+if ($p.ExitCode -eq 1) {
+    "解析にエラーのあった TU があります(.index\$Name.tsv.tu.tsv の ok=0)。その TU だけにある参照は索引に入りません"
+} elseif ($p.ExitCode -ne 0) {
+    "索引を作れませんでした(ltidx の終了コード $($p.ExitCode)。.index\$Name.log を見てください)。前の索引はそのまま残っています"
+    exit 2
+}
+exit 0

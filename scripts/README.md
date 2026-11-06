@@ -14,7 +14,7 @@
 ## 前提
 
 - Windows、Visual Studio(C++ のツール)、PowerShell 7(`pwsh`)
-- `ltidx.exe`(`index-project` が使う)。`indexer\build.bat` でビルドしたものか、`get-ltidx.bat` で取ってきたもの(`%LOCALAPPDATA%\cxxref\ltidx`)。両方あればビルドしたものを使い、環境変数 `LTIDX` があればそれを使います
+- `ltidx.exe`(`index-project` が使う)。`indexer\build.bat` でビルドしたものか、`get-ltidx.bat` で取ってきたもの(`%LOCALAPPDATA%\cxxref\ltidx`)。両方あればビルドしたものを使い、環境変数 `LTIDX` があればそれを使います(`LTIDX` の指す先に無ければ、ほかを探さずに止まります)
 
 ## 使い方
 
@@ -55,6 +55,8 @@ index-project.bat -Root D:\src\game -Cdb D:\build\game
 `compile_commands.json` は毎回作り直します(Visual Studio のソリューションなら数秒)。増えた・消えたソースも拾えます。作ったものは `<ルート>\.index\cdb-<構成>-<プラットフォーム>\` に置きます。
 
 作り方(`compile_commands.json` の場所・作り方の引数・並列数)を `<ルート>\.index\<名前>.tsv.recipe.json` に残します。MCP サーバーはこれを使って、ソースが変わると索引を自動で作り直します(`../mcp/README.md` の「索引の自動更新」)。
+
+解析にエラーのあった TU があっても、索引ができれば終了コード 0 で終わります(どの TU かは `.index\<名前>.tsv.tu.tsv` の ok=0 の行)。索引を作れなかったら 2 です(前の索引は残ります)。
 
 `make-cdb.bat` だけを使うこともできます(引数は `-Root`・`-Project`・`-Configuration`・`-Platform`・`-CMakeArgs`・`-Out`)。
 
